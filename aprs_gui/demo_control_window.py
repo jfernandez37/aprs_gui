@@ -1,6 +1,6 @@
 import customtkinter as ctk
 from rclpy.node import Node
-from tkinter import ttk
+from tkinter import ttk, END
 import tkinter as tk
 from PIL import Image, ImageTk
 from sensor_msgs.msg import Image as ImageMsg, JointState
@@ -10,12 +10,20 @@ from cv_bridge import CvBridge
 from typing import Optional
 from cv2.typing import MatLike
 from functools import partial
-from time import time
+from time import time, localtime, strftime
 from queue import Queue
 from example_interfaces.srv import Trigger
 from aprs_interfaces.msg import SlotPixel, PixelCenter, PixelSlotInfo
 from math import sin, cos, pi
 from copy import copy
+from ament_index_python.packages import get_package_share_directory
+from tf2_ros.buffer import Buffer
+from tf2_ros.transform_listener import TransformListener
+from tf2_ros.static_transform_broadcaster import StaticTransformBroadcaster
+import yaml
+from difflib import SequenceMatcher
+from aprs_interfaces.srv import MoveToNamedPose
+from sensor_msgs.msg import JointState
 
 FRAMEWIDTH=1200
 FRAMEHEIGHT=750
@@ -37,7 +45,11 @@ GEAR_TRAY_COLORS_AND_SIZES = {
     15: ("red", (10, 22))
 }
 
+ROBOTS = ["fanuc", "motoman"]
+
 class DemoControlWindow(Node):
+    _service_types = ["move_to_named_pose", "pick_from_slot", "place_in_slot"]
+
     def __init__(self):
         super().__init__("aprs_demo_gui")
         
@@ -63,14 +75,37 @@ class DemoControlWindow(Node):
         self.bridge = CvBridge()
         self.fanuc_image_update_var = ctk.IntVar(value=1)
         self.teach_image_update_var = ctk.IntVar(value=1)
-        self.most_recent_fanuc_time = -100
-        self.most_recent_teach_time = -100
+        self.most_recent_fanuc_vision_time = -100
+        self.most_recent_teach_vision_time = -100
         self.fanuc_image = None
         self.teach_image = None
 
         # ROBOT CONNECTIONS
-        self.most_recent_joint_states_time = -100
-        self.most_recent_joint_states = None
+        self.most_recent_joint_states_times = {robot: -100 for robot in ROBOTS}
+        self.most_recent_joint_states = {robot: None for robot in ROBOTS}
+        self.joint_states_recieved = {robot: False for robot in ROBOTS}
+        self.joint_states_updated = {robot: ctk.IntVar(value=1) for robot in ROBOTS}
+
+        # GET_NAMED_POSITIONS
+        self.fanuc_named_positions = self.get_named_positions("fanuc")
+        if len(self.fanuc_named_positions) == 0:
+            self.get_logger().warn("No named positions were found for Fanuc")
+
+        # TF
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+
+        self.tf_broadcaster = StaticTransformBroadcaster(self)
+        self.static_transforms = []
+
+        frames_dict = yaml.safe_load(self.tf_buffer.all_frames_as_yaml())
+        try:
+            self.frames_list = list(frames_dict.keys())
+        except:
+            self.frames_list = []
+
+        # Service clients
+        self.fanuc_clients = {"move_to_named_pose": self.create_client(MoveToNamedPose, "/fanuc/move_to_named_pose")}
         
         self.notebook = ttk.Notebook(self.main_window)
         
@@ -78,6 +113,22 @@ class DemoControlWindow(Node):
         self.vision_frame.pack(fill='both', expand=True)
         self.notebook.add(self.vision_frame, text="Run Demo")
         self.setup_vision_tab()
+
+        self.service_frame = ctk.CTkFrame(self.notebook, width=FRAMEWIDTH, height=FRAMEHEIGHT)
+        self.service_frame.pack(fill='both', expand=True)
+        self.notebook.add(self.service_frame, text="Call Service")
+        self.setup_services_tab()
+
+        self.fanuc_frame = ctk.CTkFrame(self.notebook, width=FRAMEWIDTH, height=FRAMEHEIGHT)
+        self.fanuc_frame.pack(fill='both', expand=True)
+        self.notebook.add(self.fanuc_frame, text="Fanuc Info")
+        self.setup_fanuc_frame()
+        self.temp_fanuc_widgets = []
+
+        self.motoman_frame = ctk.CTkFrame(self.notebook, width=FRAMEWIDTH, height=FRAMEHEIGHT)
+        self.motoman_frame.pack(fill='both', expand=True)
+        self.notebook.add(self.motoman_frame, text="Motoman Info")
+        self.setup_motoman_frame()
         
         self.notebook.grid(pady=10, column=LEFT_COLUMN, columnspan = 3, sticky=tk.E+tk.W+tk.N+tk.S)
         
@@ -108,10 +159,17 @@ class DemoControlWindow(Node):
             qos_profile_default
         )
 
-        self.joint_stats_subscriber = self.create_subscription(
+        self.fanuc_joint_states_subscriber = self.create_subscription(
             JointState,
-            "/joint_states",
-            self.joint_state_cb,
+            "/fanuc/joint_states",
+            self.fanuc_joint_state_cb,
+            10
+        )
+
+        self.motoman_joint_states_subscriber = self.create_subscription(
+            JointState,
+            "/motoman/joint_states",
+            self.motoman_joint_state_cb,
             10
         )
         
@@ -137,9 +195,13 @@ class DemoControlWindow(Node):
         joint_states_timer = self.create_timer(0.5, self.robot_connection_cb)
 
         # Robot Status Labels
-        ctk.CTkLabel(self.main_window, text="Robot Status:").grid(column = LEFT_COLUMN, row = 3)
-        self.robot_status_label = ctk.CTkLabel(self.main_window, text="Not Connected", text_color="red")
-        self.robot_status_label.grid(column = RIGHT_COLUMN, row = 3, padx=5) 
+        ctk.CTkLabel(self.main_window, text="Fanuc Status:").grid(column = LEFT_COLUMN, row = 3)
+        self.fanuc_status_label = ctk.CTkLabel(self.main_window, text="Not Connected", text_color="red")
+        self.fanuc_status_label.grid(column = LEFT_COLUMN, row = 4, padx=5)
+
+        ctk.CTkLabel(self.main_window, text="Motoman Status:").grid(column = RIGHT_COLUMN, row = 3)
+        self.motoman_status_label = ctk.CTkLabel(self.main_window, text="Not Connected", text_color="red")
+        self.motoman_status_label.grid(column = RIGHT_COLUMN, row = 4, padx=5) 
         
     # VISION FUNCTIONS
     def setup_vision_tab(self):
@@ -157,8 +219,8 @@ class DemoControlWindow(Node):
         # Status Labels
         fanuc_status_header_label = ctk.CTkLabel(self.vision_frame, text="Status:")
         fanuc_status_header_label.grid(column = LEFT_COLUMN, row=2)
-        self.fanuc_status_label = ctk.CTkLabel(self.vision_frame, text="Not Connected", text_color = "red")
-        self.fanuc_status_label.grid(column=LEFT_COLUMN, row=3)
+        self.fanuc_vision_status_label = ctk.CTkLabel(self.vision_frame, text="Not Connected", text_color = "red")
+        self.fanuc_vision_status_label.grid(column=LEFT_COLUMN, row=3)
         
         teach_status_header_label = ctk.CTkLabel(self.vision_frame, text="Status:")
         teach_status_header_label.grid(column = RIGHT_COLUMN, row=2)
@@ -199,7 +261,7 @@ class DemoControlWindow(Node):
         # # print(fanuc_image.shape)
         # self.fanuc_image.put(ctk.CTkImage(Image.fromarray(fanuc_image), size=(375, 211)))
         # self.fanuc_image_update()
-        self.most_recent_fanuc_time = time()
+        self.most_recent_fanuc_vision_time = time()
         self.fanuc_image = msg
         self.fanuc_image_update_var.set((self.fanuc_image_update_var.get()+1)%2)
     
@@ -213,7 +275,7 @@ class DemoControlWindow(Node):
         # # print(teach_table_image.shape)
         # self.teach_image.put(ctk.CTkImage(Image.fromarray(teach_table_image), size=(375, 211)))
         # self.teach_image_update()
-        self.most_recent_teach_time = time()
+        self.most_recent_teach_vision_time = time()
         self.teach_image = msg
         self.teach_image_update_var.set((self.teach_image_update_var.get()+1)%2)
     
@@ -224,12 +286,12 @@ class DemoControlWindow(Node):
     
     def vision_connection_cb(self):
         current_time = time()
-        if current_time - self.most_recent_fanuc_time > 5.0:
-            self.fanuc_status_label.configure(text="Not Connected", text_color = "red")
+        if current_time - self.most_recent_fanuc_vision_time > 5.0:
+            self.fanuc_vision_status_label.configure(text="Not Connected", text_color = "red")
         else:
-            self.fanuc_status_label.configure(text="Connected", text_color = "green")
+            self.fanuc_vision_status_label.configure(text="Connected", text_color = "green")
         
-        if current_time - self.most_recent_teach_time > 5.0:
+        if current_time - self.most_recent_teach_vision_time > 5.0:
             self.teach_table_status_label.configure(text="Not Connected", text_color = "red")
         else:
             self.teach_table_status_label.configure(text="Connected", text_color = "green")
@@ -342,14 +404,261 @@ class DemoControlWindow(Node):
             original_y = copy(points[i+1] - center_y)
             points[i] = int((original_x * cos(rotation) + original_y * sin(rotation))) + center_x
             points[i+1] = int((-1 * original_x * sin(rotation) + original_y * cos(rotation))) + center_y
+    
+    def fanuc_joint_state_cb(self, msg:JointState):
+        self.most_recent_joint_states_times["fanuc"] = time()
+        self.most_recent_joint_states["fanuc"] = msg
 
-    # Robot Connections
-    def joint_state_cb(self, msg: JointState):
-        self.most_recent_joint_states_time = time()
-        self.most_recent_joint_states = msg
+    def motoman_joint_state_cb(self, msg:JointState):
+        self.most_recent_joint_states_times["motoman"] = time()
+        self.most_recent_joint_states["motoman"] = msg
 
     def robot_connection_cb(self):
-        if time() - self.most_recent_joint_states_time <= 3.0:
-            self.robot_status_label.configure(text="Connected", text_color="green")
+        if time() - self.most_recent_joint_states_times["fanuc"] <= 3.0:
+            self.fanuc_status_label.configure(text="Connected", text_color="green")
         else:
-            self.robot_status_label.configure(text="Not Connected", text_color="red")
+            self.fanuc_status_label.configure(text="Not Connected", text_color="red")
+
+        if time() - self.most_recent_joint_states_times["motoman"] <= 3.0:
+            self.motoman_status_label.configure(text="Connected", text_color="green")
+        else:
+            self.motoman_status_label.configure(text="Not Connected", text_color="red")
+        
+        frames_dict = yaml.safe_load(self.tf_buffer.all_frames_as_yaml())
+        try:
+            self.frames_list = list(frames_dict.keys())
+        except:
+            self.frames_list = []
+    
+    # Services tab
+    def setup_services_tab(self):
+        self.service_frame.grid_rowconfigure(0, weight=1)
+        self.service_frame.grid_rowconfigure(100, weight=1)
+        self.service_frame.grid_columnconfigure(0, weight=1)
+        self.service_frame.grid_columnconfigure(10, weight=1)
+        
+        # Fanuc widgets
+        fanuc_service_selection_label = ctk.CTkLabel(self.service_frame, text="Select the service to call for the Fanuc")
+        fanuc_service_selection_label.grid(column=LEFT_COLUMN, row=1)
+
+        service_types = copy(self._service_types)
+        if len(self.fanuc_named_positions) == 0:
+            service_types = self._service_types[1:]
+        
+        self.fanuc_selected_service = ctk.StringVar(value=service_types[0])
+        fanuc_service_selection_menu = ctk.CTkOptionMenu(self.service_frame, variable=self.fanuc_selected_service, values=service_types)
+        fanuc_service_selection_menu.grid(column=LEFT_COLUMN, row = 2)
+
+        self.fanuc_service_menu_widgets = []
+        self.selected_named_pose = ctk.StringVar()
+        if len(self.fanuc_named_positions) > 0:
+            self.selected_named_pose.set(self.fanuc_named_positions[0])
+        self.selected_frame = ctk.StringVar(value="")
+
+        self.frame_menu = ctk.CTkComboBox(self.service_frame, variable=self.selected_frame, values=self.frames_list)
+        
+        self.update_fanuc_service_menu(1,1,1)
+
+        call_service_button = ctk.CTkButton(self.service_frame, text="Call Service", command=self.call_fanuc_service)
+        call_service_button.grid(column=LEFT_COLUMN, row=30)
+
+        self.fanuc_selected_service.trace_add("write", self.update_fanuc_service_menu)
+        self.selected_frame.trace_add("write", self.only_show_matching_frames)
+
+    
+    def update_fanuc_service_menu(self, _, __, ___):
+        for widget in self.fanuc_service_menu_widgets:
+            widget.grid_forget()
+        
+        self.selected_frame.set("")
+
+        if self.fanuc_selected_service.get() == "move_to_named_pose":
+            self.fanuc_service_menu_widgets.append(ctk.CTkLabel(self.service_frame, text="Select the pose to move to:"))
+            self.fanuc_service_menu_widgets[-1].grid(column = LEFT_COLUMN, row = 3)
+
+            self.fanuc_service_menu_widgets.append(ctk.CTkOptionMenu(self.service_frame, variable=self.selected_named_pose, values = self.fanuc_named_positions))
+            self.fanuc_service_menu_widgets[-1].grid(column = LEFT_COLUMN, row = 4)
+
+        elif self.fanuc_selected_service.get() == "pick_from_slot":
+            self.fanuc_service_menu_widgets.append(ctk.CTkLabel(self.service_frame, text="Select the frame for picking:"))
+            self.fanuc_service_menu_widgets[-1].grid(column = LEFT_COLUMN, row = 3)
+
+            self.fanuc_service_menu_widgets.append(self.frame_menu)
+            self.fanuc_service_menu_widgets[-1].grid(column = LEFT_COLUMN, row = 4)
+        
+        else:
+            self.fanuc_service_menu_widgets.append(ctk.CTkLabel(self.service_frame, text="Select the frame for placing:"))
+            self.fanuc_service_menu_widgets[-1].grid(column = LEFT_COLUMN, row = 3)
+
+            self.fanuc_service_menu_widgets.append(self.frame_menu)
+            self.fanuc_service_menu_widgets[-1].grid(column = LEFT_COLUMN, row = 4)
+
+    def call_fanuc_service(self):
+        if self.fanuc_selected_service.get() == "move_to_named_pose":
+            move_to_named_pose_request = MoveToNamedPose.Request()
+            move_to_named_pose_request.name = self.selected_named_pose
+
+            future = self.fanuc_clients[self.fanuc_selected_service.get()].call_async(move_to_named_pose_request)
+
+            start = time()
+            while not future.done():
+                pass
+                if time()-start >= 15.0:
+                    self.get_logger().warn("Unable to Move fanuc to desired pose")
+                    return
+        elif self.fanuc_selected_service.get() == "pick_from_slot":
+            pass
+        
+        else:
+            pass
+
+
+    # Get Named Positions
+    def get_named_positions(self, robot_name: str):
+        moveit_package = get_package_share_directory(f'{robot_name}_moveit_config')
+        srdf_file_path = moveit_package + f"/config/{robot_name}.srdf"
+        found_named_positions = []
+        with open(srdf_file_path, "+r") as f:
+            for line in f:
+                if "group_state" in line and " name" in line:
+                    found_name = ""
+                    inside_quotes = False
+                    for c in line[line.find(" name"):]:
+                        if c == '"':
+                            if inside_quotes == False:
+                                inside_quotes = True
+                                continue
+                            else:
+                                break
+                        if inside_quotes:
+                            found_name += c
+                    found_named_positions.append(found_name)
+        return found_named_positions
+
+    def only_show_matching_frames(self, _, __, ___):
+        selection = self.selected_frame.get()
+
+        if selection in self.frames_list:
+            self.frame_menu.configure(values = self.frames_list)
+        else:
+            options = []
+            for topic in self.frames_list:
+                if selection in topic:
+                    options.append(topic)
+                elif SequenceMatcher(None, selection, topic[:len(selection)]).ratio() > 0.5:
+                    options.append(topic)
+            self.frame_menu.configure(values = options)
+
+    def setup_fanuc_frame(self):
+        self.fanuc_frame.grid_rowconfigure(0, weight=1)
+        self.fanuc_frame.grid_rowconfigure(100, weight=1)
+        self.fanuc_frame.grid_columnconfigure(0, weight=1)
+        self.fanuc_frame.grid_columnconfigure(10, weight=1)
+
+        self.fanuc_states_not_recieved_yet_label = ctk.CTkLabel(self.fanuc_frame, text="No joint states have been recieved for the fanuc")
+        self.fanuc_states_not_recieved_yet_label.grid(row = 1, column = MIDDLE_COLUMN)
+
+        self.fanuc_joint_states_recieved_time_label = ctk.CTkLabel(self.fanuc_frame, text="")
+        self.fanuc_joint_states_names_label = ctk.CTkLabel(self.fanuc_frame, text="")
+        self.fanuc_joint_states_positions_label = ctk.CTkLabel(self.fanuc_frame, text="")
+
+        self.update_fanuc_info_button = ctk.CTkButton(self.fanuc_frame, text="Update info", command=self.update_fanuc_info)
+    
+    def update_fanuc_frame(self, _, __, ___):
+        if not self.joint_states_recieved["fanuc"]:
+            self.joint_states_recieved["fanuc"] = True
+            self.fanuc_states_not_recieved_yet_label.grid_forget()
+            self.fanuc_joint_states_recieved_time_label.grid(column=LEFT_COLUMN, row = 1, padx = 15)
+            self.fanuc_joint_states_recieved_time_label.configure(text=strftime('%Y-%m-%d %H:%M:%S', localtime(self.most_recent_joint_states_times["fanuc"])))
+            
+            self.fanuc_joint_states_names_label.grid(column = RIGHT_COLUMN, row = 1, padx = 15)
+            self.fanuc_joint_states_positions_label.grid(column = RIGHT_COLUMN+1, row = 1, padx = 15)
+            self.update_motoman_info_button.grid(column = MIDDLE_COLUMN, row = 20, padx=15, pady=10)
+
+            self.most_recent_joint_states: dict[str, JointState]
+        joint_states_names_str = "Name\n"
+        joint_states_positions_str = "Position\n"
+        for i in range(len(self.most_recent_joint_states["fanuc"].name)):
+            joint_states_names_str += self.most_recent_joint_states["fanuc"].name[i] +'\n'
+            joint_states_positions_str += str(self.most_recent_joint_states["fanuc"].position[i]) + '\n'
+
+        self.fanuc_joint_states_names_label.configure(text = joint_states_names_str)
+        self.fanuc_joint_states_positions_label.configure(text = joint_states_positions_str)
+    
+    def update_fanuc_info(self):
+        self.motoman_joint_states_recieved_time_label.configure(text=strftime('%Y-%m-%d %H:%M:%S', localtime(self.most_recent_joint_states_times["fanuc"])))
+
+        self.most_recent_joint_states: dict[str, JointState]
+        joint_states_names_str = "Name\n"
+        joint_states_positions_str = "Position\n"
+        for i in range(len(self.most_recent_joint_states["motoman"].name)):
+            joint_states_names_str += self.most_recent_joint_states["motoman"].name[i] +'\n'
+            joint_states_positions_str += str(self.most_recent_joint_states["motoman"].position[i]) + '\n'
+
+        self.fanuc_joint_states_names_label.configure(text = joint_states_names_str)
+        self.fanuc_joint_states_positions_label.configure(text = joint_states_positions_str)
+    
+    def setup_motoman_frame(self):
+        self.motoman_frame.grid_rowconfigure(0, weight=1)
+        self.motoman_frame.grid_rowconfigure(100, weight=1)
+        self.motoman_frame.grid_columnconfigure(0, weight=1)
+        self.motoman_frame.grid_columnconfigure(10, weight=1)
+
+        self.motoman_states_not_recieved_yet_label = ctk.CTkLabel(self.motoman_frame, text="No joint states have been recieved for the motoman")
+        self.motoman_states_not_recieved_yet_label.grid(row = 1, column = MIDDLE_COLUMN)
+
+        self.motoman_joint_states_recieved_time_label = ctk.CTkLabel(self.motoman_frame, text="")
+        self.motoman_joint_states_names_label = ctk.CTkLabel(self.motoman_frame, text="")
+        self.motoman_joint_states_positions_label = ctk.CTkLabel(self.motoman_frame, text="")
+        self.motoman_joint_states_velocities_label = ctk.CTkLabel(self.motoman_frame, text="")
+        self.motoman_joint_states_accelerations_label = ctk.CTkLabel(self.motoman_frame, text="")
+
+        self.update_motoman_info_button = ctk.CTkButton(self.motoman_frame, text="Update info", command=self.update_motoman_info)
+    
+    def update_motoman_frame(self, _, __, ___):
+        if not self.joint_states_recieved["motoman"]:
+            self.joint_states_recieved["motoman"] = True
+            self.motoman_states_not_recieved_yet_label.grid_forget()
+            self.motoman_joint_states_recieved_time_label.grid(column=LEFT_COLUMN, row = 1, padx = 15)
+            self.motoman_joint_states_recieved_time_label.configure(text=strftime('%Y-%m-%d %H:%M:%S', localtime(self.most_recent_joint_states_times["motoman"])))
+            
+            self.motoman_joint_states_names_label.grid(column = RIGHT_COLUMN, row = 1, padx = 15)
+            self.motoman_joint_states_positions_label.grid(column = RIGHT_COLUMN+1, row = 1, padx = 15)
+            self.motoman_joint_states_velocities_label.grid(column = RIGHT_COLUMN+2, row = 1, padx = 15)
+            self.motoman_joint_states_accelerations_label.grid(column = RIGHT_COLUMN+3, row = 1, padx = 15)
+            self.update_motoman_info_button.grid(column = MIDDLE_COLUMN, row = 20, padx=15, pady=10)
+
+            self.most_recent_joint_states: dict[str, JointState]
+        joint_states_names_str = "Name\n"
+        joint_states_positions_str = "Position\n"
+        joint_states_velocities_str = "Velocities\n"
+        joint_states_accelerations_str = "Accelerations\n"
+        for i in range(len(self.most_recent_joint_states["motoman"].name)):
+            joint_states_names_str += self.most_recent_joint_states["motoman"].name[i] +'\n'
+            joint_states_positions_str += str(self.most_recent_joint_states["motoman"].position[i]) + '\n'
+            joint_states_velocities_str += str(self.most_recent_joint_states["motoman"].velocity[i]) + '\n'
+            joint_states_accelerations_str += str(self.most_recent_joint_states["motoman"].effort[i])  + '\n'
+
+        self.motoman_joint_states_names_label.configure(text = joint_states_names_str)
+        self.motoman_joint_states_positions_label.configure(text = joint_states_positions_str)
+        self.motoman_joint_states_velocities_label.configure(text = joint_states_velocities_str)
+        self.motoman_joint_states_accelerations_label.configure(text = joint_states_accelerations_str)
+    
+    def update_motoman_info(self):
+        self.motoman_joint_states_recieved_time_label.configure(text=strftime('%Y-%m-%d %H:%M:%S', localtime(self.most_recent_joint_states_times["motoman"])))
+
+        self.most_recent_joint_states: dict[str, JointState]
+        joint_states_names_str = "Name\n"
+        joint_states_positions_str = "Position\n"
+        joint_states_velocities_str = "Velocities\n"
+        joint_states_accelerations_str = "Accelerations\n"
+        for i in range(len(self.most_recent_joint_states["motoman"].name)):
+            joint_states_names_str += self.most_recent_joint_states["motoman"].name[i] +'\n'
+            joint_states_positions_str += str(self.most_recent_joint_states["motoman"].position[i]) + '\n'
+            joint_states_velocities_str += str(self.most_recent_joint_states["motoman"].velocity[i]) + '\n'
+            joint_states_accelerations_str += str(self.most_recent_joint_states["motoman"].effort[i])  + '\n'
+
+        self.motoman_joint_states_names_label.configure(text = joint_states_names_str)
+        self.motoman_joint_states_positions_label.configure(text = joint_states_positions_str)
+        self.motoman_joint_states_velocities_label.configure(text = joint_states_velocities_str)
+        self.motoman_joint_states_accelerations_label.configure(text = joint_states_accelerations_str)
