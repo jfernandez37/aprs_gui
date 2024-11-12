@@ -16,6 +16,10 @@ foreach(Dependency IN ITEMS ${THIS_PACKAGE_INCLUDE_DEPENDS})
   find_package(${Dependency} REQUIRED)
 endforeach()
 
+install(DIRECTORY
+  launch
+  DESTINATION share/${PROJECT_NAME}
+)
 
 # install(DIRECTORY
 #   launch
