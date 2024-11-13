@@ -9,7 +9,7 @@ from cv_bridge import CvBridge
 from time import time, localtime, strftime
 from example_interfaces.srv import Trigger
 from aprs_interfaces.msg import SlotPixel, PixelCenter, PixelSlotInfo
-from math import sin, cos
+from math import sin, cos, pi
 from copy import copy
 from ament_index_python.packages import get_package_share_directory
 from tf2_ros.buffer import Buffer
@@ -17,7 +17,7 @@ from tf2_ros.transform_listener import TransformListener
 from tf2_ros.static_transform_broadcaster import StaticTransformBroadcaster
 import yaml
 from difflib import SequenceMatcher
-from aprs_interfaces.srv import MoveToNamedPose, Pick, Place
+from aprs_interfaces.srv import MoveToNamedPose, Pick, Place, LocateTrays
 from sensor_msgs.msg import JointState
 
 FRAMEWIDTH=1200
@@ -35,9 +35,9 @@ GEAR_COLORS_AND_SIZES = {
 }
 
 GEAR_TRAY_COLORS_AND_SIZES = {
-    13: ("red", (13, 13)),
-    14: ("blue", (22,22)),
-    15: ("red", (10, 22))
+    13: ("black", (26, 26)),
+    14: ("blue", (44, 44)),
+    15: ("red", (20, 44))
 }
 
 ROBOTS = ["fanuc", "motoman"]
@@ -77,6 +77,10 @@ class DemoControlWindow(Node):
         self.fanuc_image = None
         self.motoman_image = None
         self.teach_image = None
+        self.display_image_size = (375, 211)
+        self.fanuc_image_ratios = None
+        self.motoman_image_ratios = None
+        self.teach_table_image_ratios = None
 
         # ROBOT CONNECTIONS
         self.most_recent_joint_states_times = {robot: -100 for robot in ROBOTS}
@@ -152,7 +156,7 @@ class DemoControlWindow(Node):
         
         self.fanuc_pixel_subscriber = self.create_subscription(
             SlotPixel,
-            "/fanuc/slot_pixel_centers",
+            "/fanuc/table_vision/slot_pixel_centers",
             self.update_fanuc_canvas,
             qos_profile_default
         )
@@ -187,7 +191,7 @@ class DemoControlWindow(Node):
         
         # ROS2 SERVICE CLIENTS
         self.locate_fanuc_trays_client = self.create_client(
-            Trigger,
+            LocateTrays,
             "/fanuc/table_vision/locate_trays"
         )
         self.update_fanuc_slots_client = self.create_client(
@@ -196,7 +200,7 @@ class DemoControlWindow(Node):
         )
 
         self.locate_motoman_trays_client = self.create_client(
-            Trigger,
+            LocateTrays,
             "/motoman/table_vision/locate_trays"
         )
         self.update_motoman_slots_client = self.create_client(
@@ -205,7 +209,7 @@ class DemoControlWindow(Node):
         )
 
         self.locate_teach_table_trays_client = self.create_client(
-            Trigger,
+            LocateTrays,
             "/teach/table_vision/locate_trays"
         )
         self.update_teach_table_slots_client = self.create_client(
@@ -214,7 +218,7 @@ class DemoControlWindow(Node):
         )
         
         vision_connection_timer = self.create_timer(0.5, self.vision_connection_cb)
-        joint_states_timer = self.create_timer(0.5, self.robot_connection_cb)
+        joint_states_timer = self.create_timer(1.0, self.robot_connection_cb)
 
         # Robot Status Labels
         ctk.CTkLabel(self.main_window, text="Fanuc Status:").grid(column = LEFT_COLUMN, row = 3)
@@ -283,13 +287,13 @@ class DemoControlWindow(Node):
         self.update_slots_teach_table_vision_button.grid(column=RIGHT_COLUMN, row=6)
         
         # Map canvases
-        self.fanuc_canvas = tk.Canvas(self.vision_frame, width = 300, height=300, bd = 0, highlightthickness=0)
+        self.fanuc_canvas = tk.Canvas(self.vision_frame, width = self.display_image_size[0], height=self.display_image_size[1] + 50, bd = 0, highlightthickness=0)
         self.fanuc_canvas.grid(row = 7,column = LEFT_COLUMN, sticky = "we", padx=50)
 
-        self.motoman_canvas = tk.Canvas(self.vision_frame, width = 300, height=300, bd = 0, highlightthickness=0)
+        self.motoman_canvas = tk.Canvas(self.vision_frame, width = self.display_image_size[0], height=self.display_image_size[1] + 50, bd = 0, highlightthickness=0)
         self.motoman_canvas.grid(row = 7,column = MIDDLE_COLUMN, sticky = "we", padx=50)
         
-        self.teach_table_canvas = tk.Canvas(self.vision_frame, width = 300, height=300, bd = 0, highlightthickness=0)
+        self.teach_table_canvas = tk.Canvas(self.vision_frame, width = self.display_image_size[0], height=self.display_image_size[1] + 50, bd = 0, highlightthickness=0)
         self.teach_table_canvas.grid(row = 7,column = RIGHT_COLUMN, sticky = "we", padx=50)
         
         self.fanuc_image_update_var.trace_add("write", self.fanuc_image_update)
@@ -308,6 +312,7 @@ class DemoControlWindow(Node):
     
     def fanuc_image_update(self, _, __, ___):
         cv_image = self.bridge.imgmsg_to_cv2(self.fanuc_image, "rgb8")
+        self.fanuc_image_ratios = (self.display_image_size[0]/cv_image.shape[0], self.display_image_size[1]/cv_image.shape[1])
         frame_to_show = Image.fromarray(cv_image)
         self.fanuc_image_label.configure(image=ctk.CTkImage(frame_to_show, size=(375, 211)))
     
@@ -318,20 +323,18 @@ class DemoControlWindow(Node):
     
     def motoman_image_update(self, _, __, ___):
         cv_image = self.bridge.imgmsg_to_cv2(self.motoman_image, "rgb8")
+        self.motoman_image_ratios = (self.display_image_size[0]/cv_image.shape[0], self.display_image_size[1]/cv_image.shape[1])
         frame_to_show = Image.fromarray(cv_image)
         self.motoman_image_label.configure(image=ctk.CTkImage(frame_to_show, size=(375, 211)))
 
     def teach_table_image_cb(self, msg: ImageMsg):
-        # teach_table_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="passthrough")
-        # # print(teach_table_image.shape)
-        # self.teach_image.put(ctk.CTkImage(Image.fromarray(teach_table_image), size=(375, 211)))
-        # self.teach_image_update()
         self.most_recent_teach_vision_time = time()
         self.teach_image = msg
         self.teach_image_update_var.set((self.teach_image_update_var.get()+1)%2)
     
     def teach_image_update(self, _, __, ___):
         cv_image = self.bridge.imgmsg_to_cv2(self.teach_image, "rgb8")
+        self.teach_table_image_ratios = (self.display_image_size[0]/cv_image.shape[0], self.display_image_size[1]/cv_image.shape[1])
         frame_to_show = Image.fromarray(cv_image)
         self.teach_table_image_label.configure(image=ctk.CTkImage(frame_to_show, size=(375, 211)))
     
@@ -353,7 +356,7 @@ class DemoControlWindow(Node):
             self.teach_table_status_label.configure(text="Connected", text_color = "green")
     
     def locate_fanuc_trays(self):
-        request = Trigger.Request()
+        request = LocateTrays.Request()
         future = self.locate_fanuc_trays_client.call_async(request)
 
         start = time()
@@ -378,7 +381,7 @@ class DemoControlWindow(Node):
                 return
             
     def locate_motoman_trays(self):
-        request = Trigger.Request()
+        request = LocateTrays.Request()
         future = self.locate_motoman_trays_client.call_async(request)
 
         start = time()
@@ -403,7 +406,7 @@ class DemoControlWindow(Node):
                 return
     
     def locate_teach_table_trays(self):
-        request = Trigger.Request()
+        request = LocateTrays.Request()
         future = self.locate_teach_table_trays_client.call_async(request)
 
         start = time()
@@ -433,52 +436,60 @@ class DemoControlWindow(Node):
         self.fanuc_canvas.delete("all")
         for tray in msg.kit_trays:
             tray: PixelCenter
-            self.draw_kitting_tray(self.fanuc_canvas, tray.x, tray.y, angle=tray.angle)
+            self.draw_kitting_tray(self.fanuc_canvas, int(tray.x * self.fanuc_image_ratios[0]), int(tray.y * self.fanuc_image_ratios[1]), angle=tray.angle)
             for slot in tray.slots:
                 slot: PixelSlotInfo
                 if slot.occupied:
-                    self.draw_gear(self.fanuc_canvas, slot.slot_center_x, slot.slot_center_y, slot.size)
+                    self.draw_gear(self.fanuc_canvas, int(slot.slot_center_x * self.fanuc_image_ratios[0]), int(slot.slot_center_y * self.fanuc_image_ratios[1]), slot.size)
         for tray in msg.part_trays:
             tray: PixelCenter
-            self.draw_gear_tray(self.fanuc_canvas, tray.x, tray.y, tray.identifier, angle=tray.angle)
+            self.get_logger().info(str(tray.x * self.fanuc_image_ratios[0]) + "\t" + str(tray.y * self.fanuc_image_ratios[1]))
+            # self.get_logger().info(str(tray.x) + "\t" + str(tray.y))
+            # self.get_logger().info(str(self.display_image_size))
+            self.draw_gear_tray(self.fanuc_canvas, int(tray.x * self.fanuc_image_ratios[0]), int(tray.y * self.fanuc_image_ratios[1]), tray.identifier, angle=tray.angle)
             for slot in tray.slots:
                 slot: PixelSlotInfo
                 if slot.occupied:
-                    self.draw_gear(self.fanuc_canvas, slot.slot_center_x, slot.slot_center_y, slot.size)
+                    self.get_logger().info("OCCUPIED")
+                    self.draw_gear(self.fanuc_canvas, int(slot.slot_center_x * self.fanuc_image_ratios[0]), int(slot.slot_center_y * self.fanuc_image_ratios[1]), slot.size)
     
     def update_motoman_canvas(self, msg: SlotPixel):
+        self.get_logger().info("Inside update motoman canvas")
         self.motoman_canvas.delete("all")
+        self.get_logger().info(f"There are {len(msg.kit_trays)} kit trays and {len(msg.part_trays)} part trays for the motoman")
         for tray in msg.kit_trays:
             tray: PixelCenter
-            self.draw_kitting_tray(self.motoman_canvas, tray.x, tray.y, angle=tray.angle)
+            self.get_logger().info(f"Angle for motoman kit tray: {tray.angle}")
+            self.draw_kitting_tray(self.motoman_canvas, tray.x * self.motoman_image_ratios[0], tray.y * self.motoman_image_ratios[1], angle=tray.angle)
             for slot in tray.slots:
                 slot: PixelSlotInfo
                 if slot.occupied:
-                    self.draw_gear(self.motoman_canvas, slot.slot_center_x, slot.slot_center_y, slot.size)
+                    self.draw_gear(self.motoman_canvas, slot.slot_center_x * self.motoman_image_ratios[0], slot.slot_center_y * self.motoman_image_ratios[1], slot.size)
         for tray in msg.part_trays:
             tray: PixelCenter
-            self.draw_gear_tray(self.motoman_canvas, tray.x, tray.y, tray.identifier, angle=tray.angle)
+            self.draw_gear_tray(self.motoman_canvas, tray.x * self.motoman_image_ratios[0], tray.y * self.motoman_image_ratios[1], tray.identifier, angle=tray.angle)
             for slot in tray.slots:
                 slot: PixelSlotInfo
                 if slot.occupied:
-                    self.draw_gear(self.motoman_canvas, slot.slot_center_x, slot.slot_center_y, slot.size)
+                    self.get_logger().info("OCCUPIED")
+                    self.draw_gear(self.motoman_canvas, slot.slot_center_x * self.motoman_image_ratios[0], slot.slot_center_y * self.motoman_image_ratios[1], slot.size)
     
     def update_teach_table_canvas(self, msg: SlotPixel):
         self.teach_table_canvas.delete("all")
         for tray in msg.kit_trays:
             tray: PixelCenter
-            self.draw_kitting_tray(self.teach_table_canvas, tray.x, tray.y, angle=tray.angle)
+            self.draw_kitting_tray(self.teach_table_canvas, tray.x * self.teach_table_image_ratios[0], tray.y * self.teach_table_image_ratios[1], angle=tray.angle)
             for slot in tray.slots:
                 slot: PixelSlotInfo
                 if slot.occupied:
-                    self.draw_gear(self.teach_table_canvas, slot.slot_center_x, slot.slot_center_y, slot.size)
+                    self.draw_gear(self.teach_table_canvas, slot.slot_center_x * self.teach_table_image_ratios[0], slot.slot_center_y * self.teach_table_image_ratios[1], slot.size)
         for tray in msg.part_trays:
             tray: PixelCenter
-            self.draw_gear_tray(self.teach_table_canvas, tray.x, tray.y, tray.identifier, angle=tray.angle)
+            self.draw_gear_tray(self.teach_table_canvas, tray.x * self.teach_table_image_ratios[0], tray.y * self.teach_table_image_ratios[1], tray.identifier, angle=tray.angle)
             for slot in tray.slots:
                 slot: PixelSlotInfo
                 if slot.occupied:
-                    self.draw_gear(self.teach_table_canvas, slot.slot_center_x, slot.slot_center_y, slot.size)
+                    self.draw_gear(self.teach_table_canvas, slot.slot_center_x * self.teach_table_image_ratios[0], slot.slot_center_y * self.teach_table_image_ratios[1], slot.size)
 
     # Draw on canvas
     def draw_gear(self, canvas: tk.Canvas, center_x: int, center_y: int, gear_type: int):
@@ -492,16 +503,17 @@ class DemoControlWindow(Node):
         canvas.create_polygon(points, fill=color)
     
     def draw_kitting_tray(self, canvas: tk.Canvas, center_x: int, center_y: int, angle: float = 0.0):
-        points = [center_x-17,center_y-21, center_x+8,center_y-21, center_x+17,center_y-10, center_x+17, center_y+10, center_x+8,center_y+21, center_x-17, center_y+21]
-        self.rotate_shape(center_x, center_y, points, angle)
+        points = [center_x -20,center_y-20, center_x+20,center_y-20, center_x+20,center_y+8, center_x+6, center_y+20, center_x-6,center_y+20, center_x-20, center_y+8]
+        # self.rotate_shape(center_x, center_y, points, angle)
         canvas.create_polygon(points, fill="brown")
         
     def rotate_shape(self, center_x: int, center_y: int, points, rotation: float):
+        angle = self.degs_to_rads(rotation)
         for i in range(0,len(points),2):
             original_x = copy(points[i] - center_x)
             original_y = copy(points[i+1] - center_y)
-            points[i] = int((original_x * cos(rotation) + original_y * sin(rotation))) + center_x
-            points[i+1] = int((-1 * original_x * sin(rotation) + original_y * cos(rotation))) + center_y
+            points[i] = int((original_x * cos(angle) + original_y * sin(angle))) + center_x
+            points[i+1] = int((-1 * original_x * sin(angle) + original_y * cos(angle))) + center_y
     
     def fanuc_joint_state_cb(self, msg:JointState):
         self.most_recent_joint_states_times["fanuc"] = time()
@@ -519,11 +531,13 @@ class DemoControlWindow(Node):
     def robot_connection_cb(self):
         if time() - self.most_recent_joint_states_times["fanuc"] <= 3.0:
             self.fanuc_status_label.configure(text="Connected", text_color="green")
+            self.update_fanuc_frame()
         else:
             self.fanuc_status_label.configure(text="Not Connected", text_color="red")
 
         if time() - self.most_recent_joint_states_times["motoman"] <= 3.0:
             self.motoman_status_label.configure(text="Connected", text_color="green")
+            self.update_motoman_frame()
         else:
             self.motoman_status_label.configure(text="Not Connected", text_color="red")
         
@@ -773,3 +787,7 @@ class DemoControlWindow(Node):
         self.motoman_joint_states_positions_label.configure(text = joint_states_positions_str)
         self.motoman_joint_states_velocities_label.configure(text = joint_states_velocities_str)
         self.motoman_joint_states_accelerations_label.configure(text = joint_states_accelerations_str)
+
+    # Utilities
+    def degs_to_rads(self, deg: float) -> float:
+        return deg * pi / 180
