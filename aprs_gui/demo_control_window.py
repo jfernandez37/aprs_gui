@@ -606,7 +606,7 @@ class DemoControlWindow(Node):
     def call_robot_service(self):
         if self.selected_service.get() == "move_to_named_pose":
             move_to_named_pose_request = MoveToNamedPose.Request()
-            move_to_named_pose_request.name = self.selected_named_pose
+            move_to_named_pose_request.name = self.selected_named_pose.get()
 
             future = self.service_clients[self.selected_service_robot.get()][self.selected_service.get()].call_async(move_to_named_pose_request)
 
