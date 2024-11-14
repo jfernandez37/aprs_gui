@@ -64,7 +64,7 @@ class DemoControlWindow(Node):
         s.theme_use('clam')
         s.configure('TNotebook', font='Arial Bold')
         
-        self.main_window.geometry("1200x950")
+        self.main_window.geometry("1450x950")
         
         # VISION VARIABLES
         self.bridge = CvBridge()
@@ -218,7 +218,7 @@ class DemoControlWindow(Node):
         )
         
         vision_connection_timer = self.create_timer(0.5, self.vision_connection_cb)
-        joint_states_timer = self.create_timer(1.0, self.robot_connection_cb)
+        joint_states_timer = self.create_timer(0.5, self.robot_connection_cb)
 
         # Robot Status Labels
         ctk.CTkLabel(self.main_window, text="Fanuc Status:").grid(column = LEFT_COLUMN, row = 3)
@@ -464,6 +464,7 @@ class DemoControlWindow(Node):
             for slot in tray.slots:
                 slot: PixelSlotInfo
                 if slot.occupied:
+                    self.get_logger().info("OCCUPIED")
                     self.draw_gear(self.motoman_canvas, slot.slot_center_x * self.motoman_image_ratios[0], slot.slot_center_y * self.motoman_image_ratios[1], slot.size)
         for tray in msg.part_trays:
             tray: PixelCenter
@@ -531,13 +532,14 @@ class DemoControlWindow(Node):
     def robot_connection_cb(self):
         if time() - self.most_recent_joint_states_times["fanuc"] <= 3.0:
             self.fanuc_status_label.configure(text="Connected", text_color="green")
-            self.update_fanuc_frame()
+            self.update_fanuc_info()
         else:
             self.fanuc_status_label.configure(text="Not Connected", text_color="red")
 
         if time() - self.most_recent_joint_states_times["motoman"] <= 3.0:
             self.motoman_status_label.configure(text="Connected", text_color="green")
-            self.update_motoman_frame()
+            self.get_logger().info("Should update motoman joint info")
+            self.update_motoman_info()
         else:
             self.motoman_status_label.configure(text="Not Connected", text_color="red")
         
@@ -686,8 +688,6 @@ class DemoControlWindow(Node):
         self.fanuc_joint_states_recieved_time_label = ctk.CTkLabel(self.fanuc_frame, text="")
         self.fanuc_joint_states_names_label = ctk.CTkLabel(self.fanuc_frame, text="")
         self.fanuc_joint_states_positions_label = ctk.CTkLabel(self.fanuc_frame, text="")
-
-        self.update_fanuc_info_button = ctk.CTkButton(self.fanuc_frame, text="Update info", command=self.update_fanuc_info)
     
     def update_fanuc_frame(self):
         if not self.joint_states_recieved["fanuc"]:
@@ -737,8 +737,6 @@ class DemoControlWindow(Node):
         self.motoman_joint_states_positions_label = ctk.CTkLabel(self.motoman_frame, text="")
         self.motoman_joint_states_velocities_label = ctk.CTkLabel(self.motoman_frame, text="")
         self.motoman_joint_states_accelerations_label = ctk.CTkLabel(self.motoman_frame, text="")
-
-        self.update_motoman_info_button = ctk.CTkButton(self.motoman_frame, text="Update info", command=self.update_motoman_info)
     
     def update_motoman_frame(self):
         if not self.joint_states_recieved["motoman"]:
