@@ -52,11 +52,11 @@ def launch_setup(context, *args, **kwargs):
 
     nodes_to_start = [
         gui_node,
-        # vision_system,
+        vision_system,
         # fanuc_bringup,
         # fanuc_robot_commander,
-        motoman_bringup,
-        motoman_robot_commander
+        # motoman_bringup,
+        # motoman_robot_commander
     ]
 
     return nodes_to_start
