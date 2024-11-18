@@ -4,7 +4,9 @@ from tkinter import ttk, END
 import tkinter as tk
 
 from PIL import Image
+import PyKDL
 from time import time
+from math import sin, cos, pi
 from sensor_msgs.msg import Image as ImageMsg, JointState
 from rclpy.qos import qos_profile_default
 from cv_bridge import CvBridge
@@ -12,7 +14,7 @@ from typing import Optional
 from numpy import ndarray
 from aprs_interfaces.msg import Trays, Tray
 from aprs_vision.slot_offsets import SlotOffsets
-from geometry_msgs.msg import Transform
+from geometry_msgs.msg import Transform, Quaternion
 
 from aprs_interfaces.srv import LocateTrays
 
@@ -105,6 +107,11 @@ class LiveImage(ctk.CTkLabel):
         self.after(100, self.update_image)
 
 class TrayCanvas(tk.Canvas):
+    tray_sizes_ = {13: ("red", (10, 10)),
+                   14: ("green", (20, 10)),
+                   15: ("blue", (20, 20)),
+                   16: ("black", (25, 10, 15)),
+                   17: ("yellow", (25, 13, 15))}
     def __init__(self, frame):
         super().__init__(frame, height=400, width=400, bd = 0, highlightthickness=0)
         self.conversion_factor: Optional[float] = None
@@ -122,15 +129,29 @@ class TrayCanvas(tk.Canvas):
                 c_y = tray.transform_stamped.transform.translation.y * self.conversion_factor
                 self.draw_circle(c_x, c_y, 10)
     
+    def draw_tray(self, tray, id):
+        c_x = tray.transform_stamped.transform.translation.x * self.conversion_factor
+        c_y = tray.transform_stamped.transform.translation.y * self.conversion_factor
+        if id <= 15:
+            color, size = TrayCanvas.tray_sizes_[id]
+            converted_sizes = (size[0] * self.conversion_factor, size[1] * self.conversion_factor)
+            points = [c_x-size[0], c_y-size[1], c_x-size[0], c_y+size[1], c_x+size[0], c_y+size[1], c_x+size[0], c_y-size[1]]
+            self.rotate_shape(c_x, c_y, points, self.get_tray_angle(tray.transform_stamped.transform.orientation))
+            self.create_polygon(points, fill=color)
+        else:
+            self.draw_circle(c_x, c_y, 10)
+    
     def draw_circle(self, c_x, c_y, radius):
         self.create_oval(c_x - radius, c_y - radius, c_x + radius, c_y + radius, fill="red")
 
+    def get_tray_angle(self, q):
+        R = PyKDL.Rotation.Quaternion(q.x, q.y, q.z, q.w)
+        return R.GetRPY()[-1]
 
-# Utilities
-# def rotate_shape(self, center_x: int, center_y: int, points, rotation: float):
-#     angle = self.degs_to_rads(rotation)
-#     for i in range(0,len(points),2):
-#         original_x = points[i] - center_x
-#         original_y = points[i+1] - center_y
-#         points[i] = int((original_x * cos(angle) + original_y * sin(angle))) + center_x
-#         points[i+1] = int((-1 * original_x * sin(angle) + original_y * cos(angle))) + center_y
+    def rotate_shape(self, center_x: int, center_y: int, points, rotation: float):
+        angle = self.degs_to_rads(rotation)
+        for i in range(0,len(points),2):
+            original_x = points[i] - center_x
+            original_y = points[i+1] - center_y
+            points[i] = int((original_x * cos(angle) + original_y * sin(angle))) + center_x
+            points[i+1] = int((-1 * original_x * sin(angle) + original_y * cos(angle))) + center_y
