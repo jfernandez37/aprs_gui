@@ -74,6 +74,7 @@ class GuiClass(Node):
         height_in_inches = cv_image.shape[0] / 30
         height_in_meters = height_in_inches * 0.0254
         self.fanuc_visualization_canvas.conversion_factor = 400 / height_in_meters
+        self.get_logger().info(str(self.fanuc_visualization_canvas.conversion_factor))
         self.fanuc_visualization_canvas.width = width
 
 
@@ -114,7 +115,7 @@ class TrayCanvas(tk.Canvas):
                    17: ("yellow", (25, 13, 15))}
     def __init__(self, frame):
         super().__init__(frame, height=400, width=400, bd = 0, highlightthickness=0)
-        self.conversion_factor: Optional[float] = None
+        self.conversion_factor: Optional[float] = 684.6970215679562
         self.trays_info_recieved = False
         self.tray_tranforms: Optional[list[Transform]] = None
         self.all_trays: Optional[list[Tray]] = None
@@ -125,21 +126,61 @@ class TrayCanvas(tk.Canvas):
         if self.conversion_factor is not None and self.trays_info_recieved:
             self.configure(width=self.width)
             for tray in self.all_trays:
-                c_x = tray.transform_stamped.transform.translation.x * self.conversion_factor
-                c_y = tray.transform_stamped.transform.translation.y * self.conversion_factor
-                self.draw_circle(c_x, c_y, 10)
+                self.draw_tray(tray)
     
-    def draw_tray(self, tray, id):
-        c_x = tray.transform_stamped.transform.translation.x * self.conversion_factor
-        c_y = tray.transform_stamped.transform.translation.y * self.conversion_factor
-        if id <= 15:
-            color, size = TrayCanvas.tray_sizes_[id]
-            converted_sizes = (size[0] * self.conversion_factor, size[1] * self.conversion_factor)
-            points = [c_x-size[0], c_y-size[1], c_x-size[0], c_y+size[1], c_x+size[0], c_y+size[1], c_x+size[0], c_y-size[1]]
-            self.rotate_shape(c_x, c_y, points, self.get_tray_angle(tray.transform_stamped.transform.orientation))
-            self.create_polygon(points, fill=color)
-        else:
-            self.draw_circle(c_x, c_y, 10)
+    def draw_tray(self, tray: Tray):
+        c_x = int(tray.transform_stamped.transform.translation.x * self.conversion_factor)
+        c_y = int(tray.transform_stamped.transform.translation.y * self.conversion_factor)
+
+        points = self.get_points(tray.identifier, (c_x, c_y), self.get_tray_angle(tray.transform_stamped.transform.rotation))
+        self.create_polygon(points, fill="#FF0000")
+    
+    def get_points(self, identifier: int, tray_center: tuple[int, int], rotation_angle: float):
+        print(rotation_angle)
+        match(identifier):
+            case 13:
+                x_size = 0.16 * self.conversion_factor
+                y_size = 0.16 * self.conversion_factor
+                points = [tray_center[0] - x_size / 2, tray_center[0] - y_size / 2, 
+                          tray_center[0] - x_size / 2, tray_center[0] + y_size / 2, 
+                          tray_center[0] + x_size / 2, tray_center[0] + y_size / 2, 
+                          tray_center[0] + x_size / 2, tray_center[0] - y_size / 2]
+            case 14:
+                x_size = 0.186 * self.conversion_factor
+                y_size = 0.186 * self.conversion_factor
+                points = [tray_center[0] - x_size / 2, tray_center[0] - y_size / 2, 
+                          tray_center[0] - x_size / 2, tray_center[0] + y_size / 2, 
+                          tray_center[0] + x_size / 2, tray_center[0] + y_size / 2, 
+                          tray_center[0] + x_size / 2, tray_center[0] - y_size / 2]
+            case 15:
+                x_size = 0.21 * self.conversion_factor
+                above_center = 0.113 * self.conversion_factor
+                below_center = 0.024 * self.conversion_factor
+                points = [tray_center[0] - x_size / 2, tray_center[0] - below_center, 
+                          tray_center[0] - x_size / 2, tray_center[0] + above_center, 
+                          tray_center[0] + x_size / 2, tray_center[0] + above_center, 
+                          tray_center[0] + x_size / 2, tray_center[0] - below_center]
+            case 16:
+                points = [tray_center[0] - 0.108 * self.conversion_factor, tray_center[1] - 0.062 * self.conversion_factor, # Top left corner
+                          tray_center[0] + 0.108 * self.conversion_factor, tray_center[1] - 0.062 * self.conversion_factor, # Top right corner
+                          tray_center[0] + 0.108 * self.conversion_factor, tray_center[1] + 0.05225 * self.conversion_factor, # Bottom right corner
+                          tray_center[0] + 0.019 * self.conversion_factor, tray_center[1] + 0.128 * self.conversion_factor, # Very bottom right corner
+                          tray_center[0] - 0.019 * self.conversion_factor, tray_center[1] + 0.128 * self.conversion_factor, # Very bottom left corner
+                          tray_center[0] - 0.108 * self.conversion_factor, tray_center[1] + 0.05225 * self.conversion_factor, # Bottom right corner
+                          ]
+            case 17:
+                points = [tray_center[0] - 0.105 * self.conversion_factor, tray_center[1] - 0.113 * self.conversion_factor, # Top left corner
+                          tray_center[0] + 0.105 * self.conversion_factor, tray_center[1] - 0.113 * self.conversion_factor, # Top right corner
+                          tray_center[0] + 0.105 * self.conversion_factor, tray_center[1], # Middle right coner
+                          tray_center[0] + 0.06638 * self.conversion_factor, tray_center[1] + 0.08 * self.conversion_factor, # Bottom right corner
+                          tray_center[0] - 0.06638 * self.conversion_factor, tray_center[1] + 0.08 * self.conversion_factor, # Bottom left corner
+                          tray_center[0] - 0.105 * self.conversion_factor, tray_center[1], # Middle left coner
+                          ]
+            case _:
+                points = []
+    
+        self.rotate_shape(tray_center, points, rotation_angle)
+        return points
     
     def draw_circle(self, c_x, c_y, radius):
         self.create_oval(c_x - radius, c_y - radius, c_x + radius, c_y + radius, fill="red")
@@ -148,10 +189,10 @@ class TrayCanvas(tk.Canvas):
         R = PyKDL.Rotation.Quaternion(q.x, q.y, q.z, q.w)
         return R.GetRPY()[-1]
 
-    def rotate_shape(self, center_x: int, center_y: int, points, rotation: float):
-        angle = self.degs_to_rads(rotation)
+    def rotate_shape(self, tray_center: tuple[int, int], points, angle: float):
         for i in range(0,len(points),2):
-            original_x = points[i] - center_x
-            original_y = points[i+1] - center_y
-            points[i] = int((original_x * cos(angle) + original_y * sin(angle))) + center_x
-            points[i+1] = int((-1 * original_x * sin(angle) + original_y * cos(angle))) + center_y
+            original_x = points[i] - tray_center[0]
+            original_y = points[i+1] - tray_center[1]
+            points[i] = int((original_x * cos(angle) + original_y * sin(angle))) + tray_center[0]
+            points[i+1] = int((-1 * original_x * sin(angle) + original_y * cos(angle))) + tray_center[1]
+    

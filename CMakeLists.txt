@@ -35,6 +35,7 @@ install(PROGRAMS
   nodes/gui_node.py
   nodes/image_test_node.py
   nodes/test_gui_node.py
+  nodes/publish_dummy_trays.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
