@@ -3,7 +3,7 @@ import rclpy
 from rclpy.node import Node
 from random import random, randint
 
-from aprs_interfaces.msg import Trays, Tray
+from aprs_interfaces.msg import Trays, Tray, SlotInfo
 
 
 class MinimalPublisher(Node):
@@ -20,7 +20,7 @@ class MinimalPublisher(Node):
 
         first_tray = Tray()
         # first_tray.identifier = randint(13, 17)
-        first_tray.identifier = Tray.M2L1_KIT_TRAY
+        first_tray.identifier = Tray.S2L2_KIT_TRAY
         first_tray.name = "mt_gear_tray_ 01"
         first_tray.transform_stamped.transform.translation.x = 0.25
         first_tray.transform_stamped.transform.translation.y = 0.25
@@ -29,6 +29,13 @@ class MinimalPublisher(Node):
         first_tray.transform_stamped.transform.rotation.y = random()
         first_tray.transform_stamped.transform.rotation.z = random()
         first_tray.transform_stamped.transform.rotation.w = random()
+
+        for i in range(4):
+            slot = SlotInfo()
+            slot.occupied = random() > 0.6
+            slot.size = SlotInfo.LARGE if i < 2 else SlotInfo.SMALL
+            slot.name = f"lg_{i%2+1}" if i < 2 else f"sg_{i%2+1}"
+            first_tray.slots.append(slot)
 
         msg.part_trays.append(first_tray)
         self.publisher_.publish(msg)

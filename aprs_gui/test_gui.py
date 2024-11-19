@@ -12,7 +12,7 @@ from rclpy.qos import qos_profile_default
 from cv_bridge import CvBridge
 from typing import Optional
 from numpy import ndarray
-from aprs_interfaces.msg import Trays, Tray
+from aprs_interfaces.msg import Trays, Tray, SlotInfo
 from aprs_vision.slot_offsets import SlotOffsets
 from geometry_msgs.msg import Transform, Quaternion
 
@@ -108,7 +108,7 @@ class LiveImage(ctk.CTkLabel):
         self.after(100, self.update_image)
 
 class TrayCanvas(tk.Canvas):
-    tray_points = {Tray.SMALL_GEAR_TRAY: [
+    tray_points_ = {Tray.SMALL_GEAR_TRAY: [
         0.08 - 0.03, -0.08,
         0.08 - 0.03, -0.08,
         -0.08 + 0.03, -0.08,
@@ -205,7 +205,48 @@ class TrayCanvas(tk.Canvas):
         -0.108, 0.05225, # Bottom left corner
         -0.108, 0.05225 - 0.03,
         -0.108, 0.05225 - 0.03,
+    ],
+    Tray.S2L2_KIT_TRAY: [
+        -0.105, -0.113 + 0.03,
+        -0.105, -0.113 + 0.03,
+        -0.105, -0.113, # Top left corner
+        -0.105 + 0.03, -0.113,
+        -0.105 + 0.03, -0.113,
+        
+        0.105 - 0.03, -0.113,
+        0.105 - 0.03, -0.113,
+        0.105, -0.113, # Top right corner
+        0.105, -0.113 + 0.03,
+        0.105, -0.113 + 0.03,
+        
+        0.105, -0.03,
+        0.105, -0.03,
+        0.105, 0.0, # Middle right coner
+        0.105 - 0.012827119, 0.0271186441,
+        0.105 - 0.012827119, 0.0271186441,
+        
+        0.06638 + 0.012827119, 0.08 - 0.0271186441,
+        0.06638 + 0.012827119, 0.08 - 0.0271186441,
+        0.06638, 0.08, # Bottom right corner
+        0.06638 - 0.03, 0.08,
+        0.06638 - 0.03, 0.08,
+        
+        -0.06638 + 0.03, 0.08,
+        -0.06638 + 0.03, 0.08,
+        -0.06638,  0.08, # Bottom left corner
+        -0.06638 - 0.012827119, 0.08 - 0.0271186441,
+        -0.06638 - 0.012827119, 0.08 - 0.0271186441,
+        
+        -0.105 + 0.012827119, 0.0271186441,
+        -0.105 + 0.012827119, 0.0271186441,
+        -0.105, 0.0, # Middle left coner
+        -0.105, - 0.03,
+        -0.105, - 0.03
     ]}
+
+    gear_radii_ = {SlotInfo.SMALL: 0.032,
+                   SlotInfo.MEDIUM: 0.04,
+                   SlotInfo.LARGE: 0.05}
     def __init__(self, frame):
         super().__init__(frame, height=400, width=400, bd = 0, highlightthickness=0)
         self.conversion_factor: Optional[float] = 684.6970215679562
@@ -224,38 +265,21 @@ class TrayCanvas(tk.Canvas):
     def draw_tray(self, tray: Tray):
         c_x = int(tray.transform_stamped.transform.translation.x * self.conversion_factor)
         c_y = int(tray.transform_stamped.transform.translation.y * self.conversion_factor)
-
-        points = self.get_points(tray.identifier, (c_x, c_y), self.get_tray_angle(tray.transform_stamped.transform.rotation))
+        if tray.identifier not in TrayCanvas.tray_points_.keys():
+            return
+        points = [TrayCanvas.tray_points_[tray.identifier][i] * self.conversion_factor + (c_x, c_y)[i%2] for i in range(len(TrayCanvas.tray_points_[tray.identifier]))]
+        self.rotate_shape((c_x, c_y), points, self.get_tray_angle(tray.transform_stamped.transform.rotation))
         self.create_polygon(points, fill="#FF0000", smooth=True)
-    
-    def get_points(self, identifier: int, tray_center: tuple[int, int], rotation_angle: float):
-        print(rotation_angle)
-        radius = 0.03 * self.conversion_factor
-        match(identifier):
-            case Tray.SMALL_GEAR_TRAY:
-                points = [TrayCanvas.tray_points[13][i] * self.conversion_factor + (tray_center[i%2]) for i in range(len(TrayCanvas.tray_points[13]))]
-            case Tray.MEDIUM_GEAR_TRAY:
-                points = [TrayCanvas.tray_points[14][i] * self.conversion_factor + (tray_center[i%2]) for i in range(len(TrayCanvas.tray_points[14]))]
-            case Tray.LARGE_GEAR_TRAY:
-                points = [TrayCanvas.tray_points[15][i] * self.conversion_factor + (tray_center[i%2]) for i in range(len(TrayCanvas.tray_points[15]))]
-            case Tray.M2L1_KIT_TRAY:
-                points = [TrayCanvas.tray_points[16][i] * self.conversion_factor + (tray_center[i%2]) for i in range(len(TrayCanvas.tray_points[16]))]
-            case Tray.S2L2_KIT_TRAY:
-                points = [tray_center[0] - 0.105 * self.conversion_factor, tray_center[1] - 0.113 * self.conversion_factor, # Top left corner
-                          tray_center[0] + 0.105 * self.conversion_factor, tray_center[1] - 0.113 * self.conversion_factor, # Top right corner
-                          tray_center[0] + 0.105 * self.conversion_factor, tray_center[1], # Middle right coner
-                          tray_center[0] + 0.06638 * self.conversion_factor, tray_center[1] + 0.08 * self.conversion_factor, # Bottom right corner
-                          tray_center[0] - 0.06638 * self.conversion_factor, tray_center[1] + 0.08 * self.conversion_factor, # Bottom left corner
-                          tray_center[0] - 0.105 * self.conversion_factor, tray_center[1], # Middle left coner
-                          ]
-            case _:
-                points = []
-    
-        self.rotate_shape(tray_center, points, rotation_angle)
-        return points
+        for slot in tray.slots:
+            if slot.occupied:
+                x_coord = c_x + SlotOffsets.offsets[tray.identifier][slot.name][0] * self.conversion_factor
+                y_coord = c_y + SlotOffsets.offsets[tray.identifier][slot.name][1] * self.conversion_factor
+                slot_coords = [x_coord, y_coord]
+                self.rotate_shape((c_x, c_y), slot_coords, self.get_tray_angle(tray.transform_stamped.transform.rotation))
+                self.draw_circle(slot_coords[0], slot_coords[1], TrayCanvas.gear_radii_[slot.size] * self.conversion_factor)
     
     def draw_circle(self, c_x, c_y, radius):
-        self.create_oval(c_x - radius, c_y - radius, c_x + radius, c_y + radius, fill="red")
+        self.create_oval(c_x - radius, c_y - radius, c_x + radius, c_y + radius, fill="yellow")
 
     def get_tray_angle(self, q):
         R = PyKDL.Rotation.Quaternion(q.x, q.y, q.z, q.w)
