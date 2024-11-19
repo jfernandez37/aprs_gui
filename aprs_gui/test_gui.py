@@ -108,11 +108,104 @@ class LiveImage(ctk.CTkLabel):
         self.after(100, self.update_image)
 
 class TrayCanvas(tk.Canvas):
-    tray_sizes_ = {13: ("red", (10, 10)),
-                   14: ("green", (20, 10)),
-                   15: ("blue", (20, 20)),
-                   16: ("black", (25, 10, 15)),
-                   17: ("yellow", (25, 13, 15))}
+    tray_points = {Tray.SMALL_GEAR_TRAY: [
+        0.08 - 0.03, -0.08,
+        0.08 - 0.03, -0.08,
+        -0.08 + 0.03, -0.08,
+        -0.08 + 0.03, -0.08,
+        -0.08, -0.08,
+        -0.08, -0.08 + 0.03,
+        -0.08, -0.08 + 0.03,
+        -0.08, 0.08 - 0.03,
+        -0.08, 0.08 - 0.03,
+        -0.08, 0.08, 
+        -0.08 + 0.03, 0.08,
+        -0.08 + 0.03, 0.08, 
+        0.08 - 0.03, 0.08, 
+        0.08 - 0.03, 0.08,
+        0.08, 0.08, 
+        0.08, 0.08 - 0.03,
+        0.08, 0.08 - 0.03,
+        0.08, -0.08 + 0.03,
+        0.08, -0.08 + 0.03,
+        0.08, -0.08
+    ],
+    Tray.MEDIUM_GEAR_TRAY: [
+        0.098 - 0.03, -0.098,
+        0.098 - 0.03, -0.098,
+        -0.098 + 0.03, -0.098,
+        -0.098 + 0.03, -0.098,
+        -0.098, -0.098,
+        -0.098, -0.098 + 0.03,
+        -0.098, -0.098 + 0.03,
+        -0.098, 0.098 - 0.03,
+        -0.098, 0.098 - 0.03,
+        -0.098, 0.098, 
+        -0.098 + 0.03, 0.098,
+        -0.098 + 0.03, 0.098, 
+        0.098 - 0.03, 0.098, 
+        0.098 - 0.03, 0.098,
+        0.098, 0.098, 
+        0.098, 0.098 - 0.03,
+        0.098, 0.098 - 0.03,
+        0.098, -0.098 + 0.03,
+        0.098, -0.098 + 0.03,
+        0.098, -0.098
+    ],
+    Tray.LARGE_GEAR_TRAY: [
+        0.105 - 0.03, -0.24,
+        0.105 - 0.03, -0.24,
+        -0.105 + 0.03, -0.24,
+        -0.105 + 0.03, -0.24,
+        -0.105, -0.24,
+        -0.105, -0.24 + 0.03,
+        -0.105, -0.24 + 0.03,
+        -0.105, 0.113 - 0.03,
+        -0.105, 0.113 - 0.03,
+        -0.105, 0.113, 
+        -0.105 + 0.03, 0.113,
+        -0.105 + 0.03, 0.113, 
+        0.105 - 0.03, 0.113, 
+        0.105 - 0.03, 0.113,
+        0.105, 0.113, 
+        0.105, 0.113 - 0.03,
+        0.105, 0.113 - 0.03,
+        0.105, -0.24 + 0.03,
+        0.105, -0.24 + 0.03,
+        0.105, -0.24
+    ],
+    Tray.M2L1_KIT_TRAY: [
+        -0.108, -0.062 + 0.03,
+        -0.108, -0.062 + 0.03,
+        -0.108, -0.062, # Top left corner
+        -0.108 + 0.03, -0.062,
+        -0.108 + 0.03, -0.062,
+        0.108 - 0.03, -0.062, 
+        0.108 - 0.03, -0.062, 
+        0.108, -0.062, # Top right corner
+        0.108, -0.062 + 0.03,
+        0.108, -0.062 + 0.03,
+        0.108, 0.05225 - 0.03,
+        0.108, 0.05225 - 0.03,
+        0.108, 0.05225, # Bottom right corner
+        0.108 - 0.0229818653, 0.05225 + 0.019284974,
+        0.108 - 0.0229818653, 0.05225 + 0.019284974,
+        0.019 + 0.0229818653, 0.128 - 0.019284974,
+        0.019 + 0.0229818653, 0.128 - 0.019284974,
+        0.019, 0.128, # Very bottom right corner
+        0.019 - 0.03, 0.128,
+        0.019 - 0.03, 0.128,
+        -0.019 + 0.03, 0.128,
+        -0.019 + 0.03, 0.128,
+        -0.019, 0.128, # Very bottom left corner
+        -0.019 - 0.0229818653, 0.128 - 0.019284974,
+        -0.019 - 0.0229818653, 0.128 - 0.019284974,
+        -0.108 + 0.0229818653, 0.05225 +  0.019284974,
+        -0.108 + 0.0229818653, 0.05225 +  0.019284974,
+        -0.108, 0.05225, # Bottom left corner
+        -0.108, 0.05225 - 0.03,
+        -0.108, 0.05225 - 0.03,
+    ]}
     def __init__(self, frame):
         super().__init__(frame, height=400, width=400, bd = 0, highlightthickness=0)
         self.conversion_factor: Optional[float] = 684.6970215679562
@@ -133,42 +226,21 @@ class TrayCanvas(tk.Canvas):
         c_y = int(tray.transform_stamped.transform.translation.y * self.conversion_factor)
 
         points = self.get_points(tray.identifier, (c_x, c_y), self.get_tray_angle(tray.transform_stamped.transform.rotation))
-        self.create_polygon(points, fill="#FF0000")
+        self.create_polygon(points, fill="#FF0000", smooth=True)
     
     def get_points(self, identifier: int, tray_center: tuple[int, int], rotation_angle: float):
         print(rotation_angle)
+        radius = 0.03 * self.conversion_factor
         match(identifier):
-            case 13:
-                x_size = 0.16 * self.conversion_factor
-                y_size = 0.16 * self.conversion_factor
-                points = [tray_center[0] - x_size / 2, tray_center[0] - y_size / 2, 
-                          tray_center[0] - x_size / 2, tray_center[0] + y_size / 2, 
-                          tray_center[0] + x_size / 2, tray_center[0] + y_size / 2, 
-                          tray_center[0] + x_size / 2, tray_center[0] - y_size / 2]
-            case 14:
-                x_size = 0.186 * self.conversion_factor
-                y_size = 0.186 * self.conversion_factor
-                points = [tray_center[0] - x_size / 2, tray_center[0] - y_size / 2, 
-                          tray_center[0] - x_size / 2, tray_center[0] + y_size / 2, 
-                          tray_center[0] + x_size / 2, tray_center[0] + y_size / 2, 
-                          tray_center[0] + x_size / 2, tray_center[0] - y_size / 2]
-            case 15:
-                x_size = 0.21 * self.conversion_factor
-                above_center = 0.113 * self.conversion_factor
-                below_center = 0.024 * self.conversion_factor
-                points = [tray_center[0] - x_size / 2, tray_center[0] - below_center, 
-                          tray_center[0] - x_size / 2, tray_center[0] + above_center, 
-                          tray_center[0] + x_size / 2, tray_center[0] + above_center, 
-                          tray_center[0] + x_size / 2, tray_center[0] - below_center]
-            case 16:
-                points = [tray_center[0] - 0.108 * self.conversion_factor, tray_center[1] - 0.062 * self.conversion_factor, # Top left corner
-                          tray_center[0] + 0.108 * self.conversion_factor, tray_center[1] - 0.062 * self.conversion_factor, # Top right corner
-                          tray_center[0] + 0.108 * self.conversion_factor, tray_center[1] + 0.05225 * self.conversion_factor, # Bottom right corner
-                          tray_center[0] + 0.019 * self.conversion_factor, tray_center[1] + 0.128 * self.conversion_factor, # Very bottom right corner
-                          tray_center[0] - 0.019 * self.conversion_factor, tray_center[1] + 0.128 * self.conversion_factor, # Very bottom left corner
-                          tray_center[0] - 0.108 * self.conversion_factor, tray_center[1] + 0.05225 * self.conversion_factor, # Bottom right corner
-                          ]
-            case 17:
+            case Tray.SMALL_GEAR_TRAY:
+                points = [TrayCanvas.tray_points[13][i] * self.conversion_factor + (tray_center[i%2]) for i in range(len(TrayCanvas.tray_points[13]))]
+            case Tray.MEDIUM_GEAR_TRAY:
+                points = [TrayCanvas.tray_points[14][i] * self.conversion_factor + (tray_center[i%2]) for i in range(len(TrayCanvas.tray_points[14]))]
+            case Tray.LARGE_GEAR_TRAY:
+                points = [TrayCanvas.tray_points[15][i] * self.conversion_factor + (tray_center[i%2]) for i in range(len(TrayCanvas.tray_points[15]))]
+            case Tray.M2L1_KIT_TRAY:
+                points = [TrayCanvas.tray_points[16][i] * self.conversion_factor + (tray_center[i%2]) for i in range(len(TrayCanvas.tray_points[16]))]
+            case Tray.S2L2_KIT_TRAY:
                 points = [tray_center[0] - 0.105 * self.conversion_factor, tray_center[1] - 0.113 * self.conversion_factor, # Top left corner
                           tray_center[0] + 0.105 * self.conversion_factor, tray_center[1] - 0.113 * self.conversion_factor, # Top right corner
                           tray_center[0] + 0.105 * self.conversion_factor, tray_center[1], # Middle right coner
