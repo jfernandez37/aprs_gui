@@ -20,9 +20,6 @@ from geometry_msgs.msg import Transform, Quaternion
 
 from aprs_interfaces.srv import LocateTrays
 
-# class TrayVisualParameters:
-#     def __init__(self, center_x, center_y, rotation, )
-
 def deg_to_rad(deg: float):
         return deg * pi / 180
 
@@ -52,7 +49,7 @@ class GuiClass(Node):
         row = 1
         for vision_system in GuiClass.vision_systems_:
             self.locate_trays_cbs_[vision_system] = ctk.CTkCheckBox(self.locate_trays_frame,text=vision_system, variable=self.locate_trays_vars[vision_system], onvalue="1", offvalue="0", height=1, width=20)
-            self.locate_trays_cbs_[vision_system].pack(pady=30)
+            self.locate_trays_cbs_[vision_system].pack(pady=30, ipadx=15, expand=True)
             row += 1
         self.locate_trays_button = ctk.CTkButton(self.locate_trays_frame, text="Locate trays", command=self.locate_trays)
         self.locate_trays_button.pack(pady=50)
@@ -74,6 +71,9 @@ class GuiClass(Node):
 
         self.visualization_canvases = {vision_system: TrayCanvas(self.main_wind) for vision_system in GuiClass.vision_systems_}
         self.visualization_canvases[self.vision_selection.get()].grid(column = 1, row = 3, rowspan=3, pady=1, padx=20, sticky="ew")
+        for vision_system in GuiClass.vision_systems_:
+            self.visualization_canvases[vision_system].bind('<Button-1>', partial(self.vis_clicked, vision_system))
+        self.visualization_labels: list[ctk.CTkLabel] = []
         
         # Subscribers and clients
         self.image_subs = {}
@@ -136,7 +136,7 @@ class GuiClass(Node):
                 while not future.done():
                     pass
                     if time()-start >= 1.0:
-                        self.get_logger().warn("Unable to locate Fanuc trays. Be sure that the Fanuc is not blocking the vision system\n")
+                        self.get_logger().warn(f"Unable to locate trays for {vision_system}.\n")
                         success = False
                         break
                 if not success:
@@ -151,17 +151,30 @@ class GuiClass(Node):
         self.live_image_label.current_image = self.most_recent_imgs[self.vision_selection.get()]
         for canvas in self.visualization_canvases.values():
             canvas.grid_forget()
+
+        for label in self.visualization_labels:
+            label.grid_forget()
+        self.visualization_labels.clear()
         
         self.visualization_canvases[self.vision_selection.get()].side_canvas = False
+        self.visualization_canvases[self.vision_selection.get()].update_canvas()
         self.visualization_canvases[self.vision_selection.get()].grid(in_=self.main_wind, column = 1, row = 3, rowspan=3, pady=20, padx=20, sticky="ew")
+        self.visualization_labels.append(ctk.CTkLabel(self.main_wind, text=self.vision_selection.get()))
+        self.visualization_labels[-1].grid(column = 1, row = 7, pady=5, padx=20, sticky="ew")
 
         current_row = 0
         for vision_system in GuiClass.vision_systems_:
             if vision_system != self.vision_selection.get():
                 self.visualization_canvases[vision_system].side_canvas = True
-                self.visualization_canvases[vision_system].grid(in_=self.visualization_frame, column = 0, row = current_row, pady=20, padx=20, sticky="ew")
+                self.visualization_canvases[vision_system].update_canvas()
+                self.visualization_canvases[vision_system].grid(in_=self.visualization_frame, column = 0, row = current_row, pady=5, padx=20, sticky="ew")
+                current_row += 1
+                self.visualization_labels.append(ctk.CTkLabel(self.visualization_frame, text=vision_system))
+                self.visualization_labels[-1].grid(in_=self.visualization_frame, column = 0, row = current_row, pady=5, padx=20, sticky="ew")
                 current_row += 1
 
+    def vis_clicked(self, vision_system, event):
+        self.vision_selection.set(vision_system)
 
 class LiveImage(ctk.CTkLabel):
     def __init__(self, frame):
@@ -253,7 +266,7 @@ class TrayCanvas(tk.Canvas):
     }
     
     def __init__(self, frame):
-        super().__init__(frame, height=150, width=400, bd = 0, highlightthickness=0)
+        super().__init__(frame, height=150, width=200, bd = 0, highlightthickness=0)
         self.global_conversion_factor: Optional[float] = 684.6970215679562
         self.conversion_factor = 684.6970215679562
         self.trays_info_recieved = False
@@ -273,7 +286,8 @@ class TrayCanvas(tk.Canvas):
                     self.configure(height=150, width=150)
             else:
                 self.conversion_factor = copy(self.global_conversion_factor)
-                self.configure(height=400, width=self.width)
+                # self.configure(height=400, width=self.width)
+                self.configure(height=400, width=400)
             for tray in self.all_trays:
                 self.draw_tray(tray)
     
@@ -293,7 +307,6 @@ class TrayCanvas(tk.Canvas):
                     rounded_points.append(p_1[0] + abs(radius * cos(angle)))
                 else:
                     rounded_points.append(p_1[0] - abs(radius * cos(angle)))
-                
                 if p_1[1] < p_2[1]:
                     rounded_points.append(p_1[1] + abs(radius * sin(angle)))
                 else:
@@ -304,11 +317,11 @@ class TrayCanvas(tk.Canvas):
                     rounded_points.append(p_2[0] + abs(radius * cos(angle)))
                 else:
                     rounded_points.append(p_2[0] - abs(radius * cos(angle)))
-                
                 if p_2[1] < p_1[1]:
                     rounded_points.append(p_2[1] + abs(radius * sin(angle)))
                 else:
                     rounded_points.append(p_2[1] - abs(radius * sin(angle)))
+
         return rounded_points
     
     def draw_tray(self, tray: Tray):

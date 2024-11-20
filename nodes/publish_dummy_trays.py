@@ -31,27 +31,27 @@ class MinimalPublisher(Node):
         first_tray.transform_stamped.transform.rotation.z = random()
         first_tray.transform_stamped.transform.rotation.w = random()
 
-        # second_tray = Tray()
-        # second_tray.identifier = randint(13, 17)
-        # second_tray.name = "mt_gear_tray_ 02"
-        # second_tray.transform_stamped.transform.translation.x = 0.5
-        # second_tray.transform_stamped.transform.translation.y = 0.5
-        # second_tray.transform_stamped.transform.rotation.x = random()
-        # second_tray.transform_stamped.transform.rotation.y = random()
-        # second_tray.transform_stamped.transform.rotation.z = random()
-        # second_tray.transform_stamped.transform.rotation.w = random()
+        second_tray = Tray()
+        second_tray.identifier = randint(13, 17)
+        second_tray.name = "mt_gear_tray_ 02"
+        second_tray.transform_stamped.transform.translation.x = 0.5
+        second_tray.transform_stamped.transform.translation.y = 0.5
+        second_tray.transform_stamped.transform.rotation.x = random()
+        second_tray.transform_stamped.transform.rotation.y = random()
+        second_tray.transform_stamped.transform.rotation.z = random()
+        second_tray.transform_stamped.transform.rotation.w = random()
 
-        # for i in range(4):
-        #     slot = SlotInfo()
-        #     slot.occupied = random() > 0.6
-        #     slot.size = SlotInfo.LARGE if i < 2 else SlotInfo.SMALL
-        #     slot.name = f"lg_{i%2+1}" if i < 2 else f"sg_{i%2+1}"
-        #     first_tray.slots.append(slot)
+        for i in range(4):
+            slot = SlotInfo()
+            slot.occupied = random() > 0.6
+            slot.size = SlotInfo.LARGE if i < 2 else SlotInfo.SMALL
+            slot.name = f"lg_{i%2+1}" if i < 2 else f"sg_{i%2+1}"
+            first_tray.slots.append(slot)
 
         msg.part_trays.append(first_tray)
-        # msg.part_trays.append(second_tray)
+        msg.part_trays.append(second_tray)
         self.publisher_.publish(msg)
-        # self.publisher_2.publish(msg)
+        self.publisher_2.publish(msg)
         self.i += 1
 
 
