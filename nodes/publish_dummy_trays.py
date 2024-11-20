@@ -20,7 +20,7 @@ class MinimalPublisher(Node):
 
         first_tray = Tray()
         # first_tray.identifier = randint(13, 17)
-        first_tray.identifier = Tray.M2L1_KIT_TRAY
+        first_tray.identifier = Tray.S2L2_KIT_TRAY
         first_tray.name = "mt_gear_tray_ 01"
         first_tray.transform_stamped.transform.translation.x = 0.25
         first_tray.transform_stamped.transform.translation.y = 0.25
