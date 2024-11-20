@@ -34,8 +34,8 @@ class GuiClass(Node):
         
         self.main_wind = ctk.CTk()
         ctk.set_appearance_mode("light")
-        self.main_wind.geometry("1200x1000")
-        self.main_wind.resizable(False, False)
+        self.main_wind.geometry("1300x1000")
+        # self.main_wind.resizable(False, False)
 
         self.img_max_height = 400
         self.main_wind.grid_rowconfigure([i for i in range(8)], weight=1)
@@ -44,7 +44,7 @@ class GuiClass(Node):
         self.bridge = CvBridge()
 
         # Locate Trays widgets
-        self.locate_trays_frame = ctk.CTkFrame(self.main_wind, 200, 800)
+        self.locate_trays_frame = ctk.CTkFrame(self.main_wind, 200, 800, fg_color="#EBEBEB")
         self.locate_trays_vars = {vision_system: ctk.StringVar(value="0") for vision_system in GuiClass.vision_systems_}
         self.locate_trays_cbs_: dict[str: ctk.CTkCheckBox] = {}
         self.locate_trays_label = ctk.CTkLabel(self.locate_trays_frame, text="Select the vision systems to locate trays for")
@@ -61,16 +61,19 @@ class GuiClass(Node):
 
         # Visualization menu widgets
         vision_selection_label = ctk.CTkLabel(self.main_wind, text="Select the vision system for the live view")
-        vision_selection_label.grid(column = 1, row = 0, pady=10, sticky="ew")
+        vision_selection_label.grid(column = 1, row = 0, pady=1, sticky="ew")
         self.vision_selection = ctk.StringVar(value=GuiClass.vision_systems_[0])
         self.vision_selection_menu = ctk.CTkOptionMenu(self.main_wind, variable=self.vision_selection, values=GuiClass.vision_systems_)
-        self.vision_selection_menu.grid(column = 1, row = 1, pady = 10, sticky="ew")
+        self.vision_selection_menu.grid(column = 1, row = 1, pady = 1, sticky="ew")
 
         self.live_image_label = LiveImage(self.main_wind)
-        self.live_image_label.grid(column = 1, row = 2, pady=20, padx=20, sticky="ew")
+        self.live_image_label.grid(column = 1, row = 2, pady=1, padx=20, sticky="ew")
+
+        self.visualization_frame = ctk.CTkFrame(self.main_wind, 400, 900, fg_color="#EBEBEB")
+        self.visualization_frame.grid(column = 2, row = 2, rowspan=8, padx=20)
 
         self.visualization_canvases = {vision_system: TrayCanvas(self.main_wind) for vision_system in GuiClass.vision_systems_}
-        self.visualization_canvases[self.vision_selection.get()].grid(column = 1, row = 3, rowspan=3, pady=20, padx=20, sticky="ew")
+        self.visualization_canvases[self.vision_selection.get()].grid(column = 1, row = 3, rowspan=3, pady=1, padx=20, sticky="ew")
         
         # Subscribers and clients
         self.image_subs = {}
@@ -97,7 +100,7 @@ class GuiClass(Node):
             )
         self.most_recent_imgs: dict[str: Optional[ctk.CTkImage]] = {vision_system: None for vision_system in GuiClass.vision_systems_}
         
-        # self.show_all_canvases(1,1,1)
+        self.show_all_canvases(1,1,1)
         self.vision_selection.trace_add("write", self.show_all_canvases)
 
     def image_cb(self, vision_system: str, msg: ImageMsg):
@@ -150,14 +153,14 @@ class GuiClass(Node):
             canvas.grid_forget()
         
         self.visualization_canvases[self.vision_selection.get()].side_canvas = False
-        self.visualization_canvases[self.vision_selection.get()].grid(column = 1, row = 3, rowspan=3, pady=20, padx=20, sticky="ew")
+        self.visualization_canvases[self.vision_selection.get()].grid(in_=self.main_wind, column = 1, row = 3, rowspan=3, pady=20, padx=20, sticky="ew")
 
-        current_row = 2
+        current_row = 0
         for vision_system in GuiClass.vision_systems_:
             if vision_system != self.vision_selection.get():
                 self.visualization_canvases[vision_system].side_canvas = True
-                self.visualization_canvases[vision_system].grid(column = 2, row = current_row, pady=20, padx=20, sticky="ew")
-                current_row+=1
+                self.visualization_canvases[vision_system].grid(in_=self.visualization_frame, column = 0, row = current_row, pady=20, padx=20, sticky="ew")
+                current_row += 1
 
 
 class LiveImage(ctk.CTkLabel):
@@ -250,7 +253,7 @@ class TrayCanvas(tk.Canvas):
     }
     
     def __init__(self, frame):
-        super().__init__(frame, height=400, width=400, bd = 0, highlightthickness=0)
+        super().__init__(frame, height=150, width=400, bd = 0, highlightthickness=0)
         self.global_conversion_factor: Optional[float] = 684.6970215679562
         self.conversion_factor = 684.6970215679562
         self.trays_info_recieved = False
@@ -263,11 +266,11 @@ class TrayCanvas(tk.Canvas):
         self.delete("all")
         if self.conversion_factor is not None and self.trays_info_recieved:
             if self.side_canvas:
-                self.conversion_factor = self.global_conversion_factor / 4
+                self.conversion_factor = self.global_conversion_factor * 3 / 8
                 try:
-                    self.configure(height=100, width=self.width/4)
+                    self.configure(height=150, width=self.width * 3 / 8)
                 except:
-                    self.configure(height=100, width=100)
+                    self.configure(height=150, width=150)
             else:
                 self.conversion_factor = copy(self.global_conversion_factor)
                 self.configure(height=400, width=self.width)
@@ -276,7 +279,6 @@ class TrayCanvas(tk.Canvas):
     
     def round_shape(self, points: list[float], radius: float):
         rounded_points = []
-        print(points)
         for i in range(0, len(points), 2):
             p_1 = (points[i], points[i+1])
             p_2 = (points[(i+2)%len(points)], points[(i+3)%len(points)])
@@ -306,7 +308,6 @@ class TrayCanvas(tk.Canvas):
                 if p_2[1] < p_1[1]:
                     rounded_points.append(p_2[1] + abs(radius * sin(angle)))
                 else:
-                    print(radius * sin(angle))
                     rounded_points.append(p_2[1] - abs(radius * sin(angle)))
         return rounded_points
     
@@ -318,7 +319,6 @@ class TrayCanvas(tk.Canvas):
         points = self.round_shape(TrayCanvas.tray_points_[tray.identifier], 0.03)
         points = [points[i] * self.conversion_factor + (c_x, c_y)[i%2] for i in range(len(points))]
         self.rotate_shape((c_x, c_y), points, self.get_tray_angle(tray.transform_stamped.transform.rotation))
-        print(TrayCanvas.tray_colors_[tray.identifier])
         self.create_polygon(points, fill=TrayCanvas.tray_colors_[tray.identifier], smooth=True)
         for slot in tray.slots:
             if slot.occupied:
