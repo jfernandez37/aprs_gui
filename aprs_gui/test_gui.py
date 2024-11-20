@@ -21,10 +21,12 @@ from aprs_interfaces.srv import LocateTrays
 # class TrayVisualParameters:
 #     def __init__(self, center_x, center_y, rotation, )
 
+def deg_to_rad(deg: float):
+        return deg * pi / 180
 class GuiClass(Node):
     def __init__(self):
         super().__init__("test_gui")
-
+        
         self.main_wind = ctk.CTk()
         ctk.set_appearance_mode("light")
         self.main_wind.geometry("800x1000")
@@ -188,20 +190,20 @@ class TrayCanvas(tk.Canvas):
         0.108, 0.05225 - 0.03,
         0.108, 0.05225 - 0.03,
         0.108, 0.05225, # Bottom right corner
-        0.108 - 0.0229818653, 0.05225 + 0.019284974,
-        0.108 - 0.0229818653, 0.05225 + 0.019284974,
-        0.019 + 0.0229818653, 0.128 - 0.019284974,
-        0.019 + 0.0229818653, 0.128 - 0.019284974,
+        0.108 - 0.03 * sin(deg_to_rad(50)), 0.05225 + 0.03 * cos(deg_to_rad(50)),
+        0.108 - 0.03 * sin(deg_to_rad(50)), 0.05225 + 0.03 * cos(deg_to_rad(50)),
+        0.019 + 0.03 * sin(deg_to_rad(50)), 0.128 - 0.03 * cos(deg_to_rad(50)),
+        0.019 + 0.03 * sin(deg_to_rad(50)), 0.128 - 0.03 * cos(deg_to_rad(50)),
         0.019, 0.128, # Very bottom right corner
         0.019 - 0.03, 0.128,
         0.019 - 0.03, 0.128,
         -0.019 + 0.03, 0.128,
         -0.019 + 0.03, 0.128,
         -0.019, 0.128, # Very bottom left corner
-        -0.019 - 0.0229818653, 0.128 - 0.019284974,
-        -0.019 - 0.0229818653, 0.128 - 0.019284974,
-        -0.108 + 0.0229818653, 0.05225 +  0.019284974,
-        -0.108 + 0.0229818653, 0.05225 +  0.019284974,
+        -0.019 - 0.03 * sin(deg_to_rad(50)), 0.128 - 0.03 * cos(deg_to_rad(50)),
+        -0.019 - 0.03 * sin(deg_to_rad(50)), 0.128 - 0.03 * cos(deg_to_rad(50)),
+        -0.108 + 0.03 * sin(deg_to_rad(50)), 0.05225 +  0.03 * cos(deg_to_rad(50)),
+        -0.108 + 0.03 * sin(deg_to_rad(50)), 0.05225 +  0.03 * cos(deg_to_rad(50)),
         -0.108, 0.05225, # Bottom left corner
         -0.108, 0.05225 - 0.03,
         -0.108, 0.05225 - 0.03,
@@ -315,4 +317,6 @@ class TrayCanvas(tk.Canvas):
             original_y = points[i+1] - tray_center[1]
             points[i] = int((original_x * cos(angle) + original_y * sin(angle))) + tray_center[0]
             points[i+1] = int((-1 * original_x * sin(angle) + original_y * cos(angle))) + tray_center[1]
+    
+    
     
