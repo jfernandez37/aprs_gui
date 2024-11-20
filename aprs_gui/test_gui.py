@@ -212,31 +212,26 @@ class TrayCanvas(tk.Canvas):
         -0.105, -0.113, # Top left corner
         -0.105 + 0.03, -0.113,
         -0.105 + 0.03, -0.113,
-        
         0.105 - 0.03, -0.113,
         0.105 - 0.03, -0.113,
         0.105, -0.113, # Top right corner
         0.105, -0.113 + 0.03,
         0.105, -0.113 + 0.03,
-        
         0.105, -0.03,
         0.105, -0.03,
         0.105, 0.0, # Middle right coner
         0.105 - 0.012827119, 0.0271186441,
         0.105 - 0.012827119, 0.0271186441,
-        
         0.06638 + 0.012827119, 0.08 - 0.0271186441,
         0.06638 + 0.012827119, 0.08 - 0.0271186441,
         0.06638, 0.08, # Bottom right corner
         0.06638 - 0.03, 0.08,
         0.06638 - 0.03, 0.08,
-        
         -0.06638 + 0.03, 0.08,
         -0.06638 + 0.03, 0.08,
         -0.06638,  0.08, # Bottom left corner
         -0.06638 - 0.012827119, 0.08 - 0.0271186441,
         -0.06638 - 0.012827119, 0.08 - 0.0271186441,
-        
         -0.105 + 0.012827119, 0.0271186441,
         -0.105 + 0.012827119, 0.0271186441,
         -0.105, 0.0, # Middle left coner
@@ -247,6 +242,35 @@ class TrayCanvas(tk.Canvas):
     gear_radii_ = {SlotInfo.SMALL: 0.032,
                    SlotInfo.MEDIUM: 0.04,
                    SlotInfo.LARGE: 0.05}
+    
+    gear_offsets_ = {Tray.SMALL_GEAR_TRAY: {
+                        'slot_1': (-0.045, 0.045),
+                        'slot_2': (0.045, 0.045),
+                        'slot_3': (-0.045, -0.045),
+                        'slot_4': (0.045, -0.045),
+                    },
+                    Tray.MEDIUM_GEAR_TRAY: {
+                        'slot_1': (-0.050, 0.050),
+                        'slot_2': (0.050, 0.050),
+                        'slot_3': (-0.050, -0.050),
+                        'slot_4': (0.050, -0.050),
+                    },
+                    Tray.LARGE_GEAR_TRAY: {
+                        'slot_1': (-0.052, -0.06),
+                        'slot_2': (0.052, 0.06),
+                    },
+                    Tray.M2L1_KIT_TRAY: {
+                        'lg_1': (0.0, -0.075),
+                        'mg_1': (-0.065, 0.0),
+                        'mg_2': (0.065, 0.0),
+                    },
+                    Tray.S2L2_KIT_TRAY: {
+                        'lg_1': (-0.052, -0.060),
+                        'lg_2': (0.052, -0.060),
+                        'sg_1': (-0.045, 0.045),
+                        'sg_2': (0.045, 0.045),
+                    }}
+    
     def __init__(self, frame):
         super().__init__(frame, height=400, width=400, bd = 0, highlightthickness=0)
         self.conversion_factor: Optional[float] = 684.6970215679562
@@ -272,8 +296,8 @@ class TrayCanvas(tk.Canvas):
         self.create_polygon(points, fill="#FF0000", smooth=True)
         for slot in tray.slots:
             if slot.occupied:
-                x_coord = c_x + SlotOffsets.offsets[tray.identifier][slot.name][0] * self.conversion_factor
-                y_coord = c_y + SlotOffsets.offsets[tray.identifier][slot.name][1] * self.conversion_factor
+                x_coord = c_x + TrayCanvas.gear_offsets_[tray.identifier][slot.name][0] * self.conversion_factor
+                y_coord = c_y + TrayCanvas.gear_offsets_[tray.identifier][slot.name][1] * self.conversion_factor
                 slot_coords = [x_coord, y_coord]
                 self.rotate_shape((c_x, c_y), slot_coords, self.get_tray_angle(tray.transform_stamped.transform.rotation))
                 self.draw_circle(slot_coords[0], slot_coords[1], TrayCanvas.gear_radii_[slot.size] * self.conversion_factor)
