@@ -6,7 +6,9 @@ import tkinter as tk
 from PIL import Image
 import PyKDL
 from time import time
-from math import sin, cos, pi
+from math import sin, cos, atan, pi
+from functools import partial
+from copy import copy
 from sensor_msgs.msg import Image as ImageMsg, JointState
 from rclpy.qos import qos_profile_default
 from cv_bridge import CvBridge
@@ -25,78 +27,137 @@ def deg_to_rad(deg: float):
         return deg * pi / 180
 
 class GuiClass(Node):
+    vision_systems_ = ["fanuc_vision", "motoman_vision", "teach_table_vision", "fanuc_conveyor", "motoman_conveyor"]
+    service_headers_ = ["/fanuc/table_vision", "/motoman/table_vision", "/teach/table_vision", "/fanuc/conveyor_vision", "/motoman/conveyor_vision"]
     def __init__(self):
         super().__init__("test_gui")
         
         self.main_wind = ctk.CTk()
         ctk.set_appearance_mode("light")
-        self.main_wind.geometry("800x1000")
+        self.main_wind.geometry("1200x1000")
         self.main_wind.resizable(False, False)
 
         self.img_max_height = 400
-        # self.main_wind.grid_rowconfigure((0,1), weight=1)
-        # self.main_wind.grid_columnconfigure(0, weight=1)
+        self.main_wind.grid_rowconfigure([i for i in range(8)], weight=1)
+        self.main_wind.grid_columnconfigure((0,1,2), weight=1)
 
         self.bridge = CvBridge()
 
-        self.fanuc_live_image_label = LiveImage(self.main_wind)
-        # self.fanuc_live_image_label.grid(column = 0, row = 0, pady=20, padx=20, sticky="ew")
-        self.fanuc_live_image_label.pack(pady = 20)
+        # Locate Trays widgets
+        self.locate_trays_frame = ctk.CTkFrame(self.main_wind, 200, 800)
+        self.locate_trays_vars = {vision_system: ctk.StringVar(value="0") for vision_system in GuiClass.vision_systems_}
+        self.locate_trays_cbs_: dict[str: ctk.CTkCheckBox] = {}
+        self.locate_trays_label = ctk.CTkLabel(self.locate_trays_frame, text="Select the vision systems to locate trays for")
+        self.locate_trays_label.pack(pady=50)
+        row = 1
+        for vision_system in GuiClass.vision_systems_:
+            self.locate_trays_cbs_[vision_system] = ctk.CTkCheckBox(self.locate_trays_frame,text=vision_system, variable=self.locate_trays_vars[vision_system], onvalue="1", offvalue="0", height=1, width=20)
+            self.locate_trays_cbs_[vision_system].pack(pady=30)
+            row += 1
+        self.locate_trays_button = ctk.CTkButton(self.locate_trays_frame, text="Locate trays", command=self.locate_trays)
+        self.locate_trays_button.pack(pady=50)
+        self.locate_trays_frame.grid(column = 0, row = 2, rowspan=6, padx=20)
 
-        self.fanuc_visualization_canvas = TrayCanvas(self.main_wind)
-        # self.dummy.grid(column = 0, row = 1, pady=20, padx=20, sticky="ew")
-        self.fanuc_visualization_canvas.pack(pady=20)
 
-        self.fanuc_locate_trays_button = ctk.CTkButton(self.main_wind, text="Locate trays", command=self.fanuc_table_locate_trays)
-        self.fanuc_locate_trays_button.pack()
+        # Visualization menu widgets
+        vision_selection_label = ctk.CTkLabel(self.main_wind, text="Select the vision system for the live view")
+        vision_selection_label.grid(column = 1, row = 0, pady=10, sticky="ew")
+        self.vision_selection = ctk.StringVar(value=GuiClass.vision_systems_[0])
+        self.vision_selection_menu = ctk.CTkOptionMenu(self.main_wind, variable=self.vision_selection, values=GuiClass.vision_systems_)
+        self.vision_selection_menu.grid(column = 1, row = 1, pady = 10, sticky="ew")
+
+        self.live_image_label = LiveImage(self.main_wind)
+        self.live_image_label.grid(column = 1, row = 2, pady=20, padx=20, sticky="ew")
+
+        self.visualization_canvases = {vision_system: TrayCanvas(self.main_wind) for vision_system in GuiClass.vision_systems_}
+        self.visualization_canvases[self.vision_selection.get()].grid(column = 1, row = 3, rowspan=3, pady=20, padx=20, sticky="ew")
         
-    
-        self.fanuc_image_subscriber = self.create_subscription(
-            ImageMsg, 
-            '/fanuc/table_vision/raw_image',
-            self.fanuc_image_cb,
-            qos_profile_default)
+        # Subscribers and clients
+        self.image_subs = {}
+        self.tray_subs = {}
+        self.locate_clients = {}
+        for i in range(len(GuiClass.vision_systems_)):
+            self.image_subs[GuiClass.vision_systems_[i]] = self.create_subscription(
+                ImageMsg, 
+                f'{GuiClass.service_headers_[i]}/raw_image',
+                partial(self.image_cb, GuiClass.vision_systems_[i]),
+                qos_profile_default
+            )
+
+            self.tray_subs[GuiClass.vision_systems_[i]] = self.create_subscription(
+                Trays,
+                f'{GuiClass.service_headers_[i]}/trays_info',
+                partial(self.trays_cb_, GuiClass.vision_systems_[i]),
+                qos_profile_default
+            )
+
+            self.locate_clients[GuiClass.vision_systems_[i]] = self.create_client(
+                LocateTrays,
+                f'{GuiClass.service_headers_[i]}/trays_info'
+            )
+        self.most_recent_imgs: dict[str: Optional[ctk.CTkImage]] = {vision_system: None for vision_system in GuiClass.vision_systems_}
         
-        self.fanuc_table_trays_info_sub = self.create_subscription(
-            Trays,
-            "/fanuc/table_vision/trays_info",
-            self.fanuc_table_trays_cb_,
-            qos_profile_default
-        )
+        # self.show_all_canvases(1,1,1)
+        self.vision_selection.trace_add("write", self.show_all_canvases)
 
-        self.locate_fanuc_trays_client = self.create_client(
-            LocateTrays,
-            "/fanuc/table_vision/locate_trays"
-        )
-
-    def fanuc_image_cb(self, msg: ImageMsg):
+    def image_cb(self, vision_system: str, msg: ImageMsg):
         cv_image = self.bridge.imgmsg_to_cv2(msg, "rgb8")
         width = int(cv_image.shape[1] * self.img_max_height / cv_image.shape[0])
-        # self.fanuc_live_image_label.current_image = ctk.CTkImage(Image.fromarray(cv_image), size=(cv_image.shape[1], cv_image.shape[0]))
-        self.fanuc_live_image_label.current_image = ctk.CTkImage(Image.fromarray(cv_image), size=(width, 400))
+        
+        self.most_recent_imgs[vision_system] = ctk.CTkImage(Image.fromarray(cv_image), size=(width, 400))
+        if vision_system == self.vision_selection.get():
+            self.live_image_label.current_image = self.live_image_label[vision_system]
+
         height_in_inches = cv_image.shape[0] / 30
         height_in_meters = height_in_inches * 0.0254
-        self.fanuc_visualization_canvas.conversion_factor = 400 / height_in_meters
-        self.get_logger().info(str(self.fanuc_visualization_canvas.conversion_factor))
-        self.fanuc_visualization_canvas.width = width
+        self.visualization_canvases[vision_system].conversion_factor = 400 / height_in_meters
+        self.visualization_canvases[vision_system].width = width
 
 
-    def fanuc_table_trays_cb_(self, msg: Trays):
+    def trays_cb_(self, vision_system: str, msg: Trays):
+        self.get_logger().info(vision_system)
         all_trays: list[Tray] = msg.kit_trays + msg.part_trays
-        self.fanuc_visualization_canvas.trays_info_recieved = True
-        self.fanuc_visualization_canvas.all_trays = all_trays
-        self.fanuc_visualization_canvas.update_canvas()
+        self.visualization_canvases[vision_system].trays_info_recieved = True
+        self.visualization_canvases[vision_system].all_trays = all_trays
+        self.visualization_canvases[vision_system].update_canvas()
     
-    def fanuc_table_locate_trays(self):
-        request = LocateTrays.Request()
-        future = self.locate_fanuc_trays_client.call_async(request)
+    def locate_trays(self):
+        c = 0
+        for vision_system in GuiClass.vision_systems_:
+            if self.locate_trays_vars[vision_system].get() == "1":
+                request = LocateTrays.Request()
+                future = self.locate_clients[vision_system].call_async(request)
 
-        start = time()
-        while not future.done():
-            pass
-            if time()-start >= 5.0:
-                self.get_logger().warn("Unable to locate Fanuc trays. Be sure that the Fanuc is not blocking the vision system\n")
-                return
+                start = time()
+                success = True
+                while not future.done():
+                    pass
+                    if time()-start >= 1.0:
+                        self.get_logger().warn("Unable to locate Fanuc trays. Be sure that the Fanuc is not blocking the vision system\n")
+                        success = False
+                        break
+                if not success:
+                    continue
+                self.locate_trays_cbs_[vision_system].grid_forget()
+                c+=1
+        if c == len(GuiClass.vision_systems_):
+            self.locate_trays_label.grid_forget()
+            self.locate_trays_button.grid_forget()
+    
+    def show_all_canvases(self, _, __, ___):
+        self.live_image_label.current_image = self.most_recent_imgs[self.vision_selection.get()]
+        for canvas in self.visualization_canvases.values():
+            canvas.grid_forget()
+        
+        self.visualization_canvases[self.vision_selection.get()].side_canvas = False
+        self.visualization_canvases[self.vision_selection.get()].grid(column = 1, row = 3, rowspan=3, pady=20, padx=20, sticky="ew")
+
+        current_row = 2
+        for vision_system in GuiClass.vision_systems_:
+            if vision_system != self.vision_selection.get():
+                self.visualization_canvases[vision_system].side_canvas = True
+                self.visualization_canvases[vision_system].grid(column = 2, row = current_row, pady=20, padx=20, sticky="ew")
+                current_row+=1
 
 
 class LiveImage(ctk.CTkLabel):
@@ -108,138 +169,140 @@ class LiveImage(ctk.CTkLabel):
     def update_image(self):
         if self.current_image is not None:
             self.configure(text="", image=self.current_image, fg_color="transparent")
-        self.after(100, self.update_image)
+        else:
+            self.configure(text="Image not found", fg_color="#C2C2C2")
+        self.after(500, self.update_image)
 
 class TrayCanvas(tk.Canvas):
     tray_points_ = {Tray.SMALL_GEAR_TRAY: [
-        0.08 - 0.03, -0.08,
-        0.08 - 0.03, -0.08,
-        -0.08 + 0.03, -0.08,
-        -0.08 + 0.03, -0.08,
+        # 0.08 - 0.03, -0.08,
+        # 0.08 - 0.03, -0.08,
+        # -0.08 + 0.03, -0.08,
+        # -0.08 + 0.03, -0.08,
         -0.08, -0.08,
-        -0.08, -0.08 + 0.03,
-        -0.08, -0.08 + 0.03,
-        -0.08, 0.08 - 0.03,
-        -0.08, 0.08 - 0.03,
+        # -0.08, -0.08 + 0.03,
+        # -0.08, -0.08 + 0.03,
+        # -0.08, 0.08 - 0.03,
+        # -0.08, 0.08 - 0.03,
         -0.08, 0.08, 
-        -0.08 + 0.03, 0.08,
-        -0.08 + 0.03, 0.08, 
-        0.08 - 0.03, 0.08, 
-        0.08 - 0.03, 0.08,
+        # -0.08 + 0.03, 0.08,
+        # -0.08 + 0.03, 0.08, 
+        # 0.08 - 0.03, 0.08, 
+        # 0.08 - 0.03, 0.08,
         0.08, 0.08, 
-        0.08, 0.08 - 0.03,
-        0.08, 0.08 - 0.03,
-        0.08, -0.08 + 0.03,
-        0.08, -0.08 + 0.03,
+        # 0.08, 0.08 - 0.03,
+        # 0.08, 0.08 - 0.03,
+        # 0.08, -0.08 + 0.03,
+        # 0.08, -0.08 + 0.03,
         0.08, -0.08
     ],
     Tray.MEDIUM_GEAR_TRAY: [
-        0.098 - 0.03, -0.098,
-        0.098 - 0.03, -0.098,
-        -0.098 + 0.03, -0.098,
-        -0.098 + 0.03, -0.098,
+        # 0.098 - 0.03, -0.098,
+        # 0.098 - 0.03, -0.098,
+        # -0.098 + 0.03, -0.098,
+        # -0.098 + 0.03, -0.098,
         -0.098, -0.098,
-        -0.098, -0.098 + 0.03,
-        -0.098, -0.098 + 0.03,
-        -0.098, 0.098 - 0.03,
-        -0.098, 0.098 - 0.03,
+        # -0.098, -0.098 + 0.03,
+        # -0.098, -0.098 + 0.03,
+        # -0.098, 0.098 - 0.03,
+        # -0.098, 0.098 - 0.03,
         -0.098, 0.098, 
-        -0.098 + 0.03, 0.098,
-        -0.098 + 0.03, 0.098, 
-        0.098 - 0.03, 0.098, 
-        0.098 - 0.03, 0.098,
+        # -0.098 + 0.03, 0.098,
+        # -0.098 + 0.03, 0.098, 
+        # 0.098 - 0.03, 0.098, 
+        # 0.098 - 0.03, 0.098,
         0.098, 0.098, 
-        0.098, 0.098 - 0.03,
-        0.098, 0.098 - 0.03,
-        0.098, -0.098 + 0.03,
-        0.098, -0.098 + 0.03,
+        # 0.098, 0.098 - 0.03,
+        # 0.098, 0.098 - 0.03,
+        # 0.098, -0.098 + 0.03,
+        # 0.098, -0.098 + 0.03,
         0.098, -0.098
     ],
     Tray.LARGE_GEAR_TRAY: [
-        0.105 - 0.03, -0.24,
-        0.105 - 0.03, -0.24,
-        -0.105 + 0.03, -0.24,
-        -0.105 + 0.03, -0.24,
+        # 0.105 - 0.03, -0.24,
+        # 0.105 - 0.03, -0.24,
+        # -0.105 + 0.03, -0.24,
+        # -0.105 + 0.03, -0.24,
         -0.105, -0.24,
-        -0.105, -0.24 + 0.03,
-        -0.105, -0.24 + 0.03,
-        -0.105, 0.113 - 0.03,
-        -0.105, 0.113 - 0.03,
+        # -0.105, -0.24 + 0.03,
+        # -0.105, -0.24 + 0.03,
+        # -0.105, 0.113 - 0.03,
+        # -0.105, 0.113 - 0.03,
         -0.105, 0.113, 
-        -0.105 + 0.03, 0.113,
-        -0.105 + 0.03, 0.113, 
-        0.105 - 0.03, 0.113, 
-        0.105 - 0.03, 0.113,
+        # -0.105 + 0.03, 0.113,
+        # -0.105 + 0.03, 0.113, 
+        # 0.105 - 0.03, 0.113, 
+        # 0.105 - 0.03, 0.113,
         0.105, 0.113, 
-        0.105, 0.113 - 0.03,
-        0.105, 0.113 - 0.03,
-        0.105, -0.24 + 0.03,
-        0.105, -0.24 + 0.03,
+        # 0.105, 0.113 - 0.03,
+        # 0.105, 0.113 - 0.03,
+        # 0.105, -0.24 + 0.03,
+        # 0.105, -0.24 + 0.03,
         0.105, -0.24
     ],
     Tray.M2L1_KIT_TRAY: [
-        -0.108, -0.062 + 0.03,
-        -0.108, -0.062 + 0.03,
+        # -0.108, -0.062 + 0.03,
+        # -0.108, -0.062 + 0.03,
         -0.108, -0.062, # Top left corner
-        -0.108 + 0.03, -0.062,
-        -0.108 + 0.03, -0.062,
-        0.108 - 0.03, -0.062, 
-        0.108 - 0.03, -0.062, 
+        # -0.108 + 0.03, -0.062,
+        # -0.108 + 0.03, -0.062,
+        # 0.108 - 0.03, -0.062, 
+        # 0.108 - 0.03, -0.062, 
         0.108, -0.062, # Top right corner
-        0.108, -0.062 + 0.03,
-        0.108, -0.062 + 0.03,
-        0.108, 0.05225 - 0.03,
-        0.108, 0.05225 - 0.03,
+        # 0.108, -0.062 + 0.03,
+        # 0.108, -0.062 + 0.03,
+        # 0.108, 0.05225 - 0.03,
+        # 0.108, 0.05225 - 0.03,
         0.108, 0.05225, # Bottom right corner
-        0.108 - 0.03 * sin(deg_to_rad(50)), 0.05225 + 0.03 * cos(deg_to_rad(50)),
-        0.108 - 0.03 * sin(deg_to_rad(50)), 0.05225 + 0.03 * cos(deg_to_rad(50)),
-        0.019 + 0.03 * sin(deg_to_rad(50)), 0.128 - 0.03 * cos(deg_to_rad(50)),
-        0.019 + 0.03 * sin(deg_to_rad(50)), 0.128 - 0.03 * cos(deg_to_rad(50)),
+        # 0.108 - 0.03 * sin(deg_to_rad(50)), 0.05225 + 0.03 * cos(deg_to_rad(50)),
+        # 0.108 - 0.03 * sin(deg_to_rad(50)), 0.05225 + 0.03 * cos(deg_to_rad(50)),
+        # 0.019 + 0.03 * sin(deg_to_rad(50)), 0.128 - 0.03 * cos(deg_to_rad(50)),
+        # 0.019 + 0.03 * sin(deg_to_rad(50)), 0.128 - 0.03 * cos(deg_to_rad(50)),
         0.019, 0.128, # Very bottom right corner
-        0.019 - 0.03, 0.128,
-        0.019 - 0.03, 0.128,
-        -0.019 + 0.03, 0.128,
-        -0.019 + 0.03, 0.128,
+        # 0.019 - 0.03, 0.128,
+        # 0.019 - 0.03, 0.128,
+        # -0.019 + 0.03, 0.128,
+        # -0.019 + 0.03, 0.128,
         -0.019, 0.128, # Very bottom left corner
-        -0.019 - 0.03 * sin(deg_to_rad(50)), 0.128 - 0.03 * cos(deg_to_rad(50)),
-        -0.019 - 0.03 * sin(deg_to_rad(50)), 0.128 - 0.03 * cos(deg_to_rad(50)),
-        -0.108 + 0.03 * sin(deg_to_rad(50)), 0.05225 +  0.03 * cos(deg_to_rad(50)),
-        -0.108 + 0.03 * sin(deg_to_rad(50)), 0.05225 +  0.03 * cos(deg_to_rad(50)),
+        # -0.019 - 0.03 * sin(deg_to_rad(50)), 0.128 - 0.03 * cos(deg_to_rad(50)),
+        # -0.019 - 0.03 * sin(deg_to_rad(50)), 0.128 - 0.03 * cos(deg_to_rad(50)),
+        # -0.108 + 0.03 * sin(deg_to_rad(50)), 0.05225 +  0.03 * cos(deg_to_rad(50)),
+        # -0.108 + 0.03 * sin(deg_to_rad(50)), 0.05225 +  0.03 * cos(deg_to_rad(50)),
         -0.108, 0.05225, # Bottom left corner
-        -0.108, 0.05225 - 0.03,
-        -0.108, 0.05225 - 0.03,
+        # -0.108, 0.05225 - 0.03,
+        # -0.108, 0.05225 - 0.03,
     ],
     Tray.S2L2_KIT_TRAY: [
-        -0.105, -0.113 + 0.03,
-        -0.105, -0.113 + 0.03,
+        # -0.105, -0.113 + 0.03,
+        # -0.105, -0.113 + 0.03,
         -0.105, -0.113, # Top left corner
-        -0.105 + 0.03, -0.113,
-        -0.105 + 0.03, -0.113,
-        0.105 - 0.03, -0.113,
-        0.105 - 0.03, -0.113,
+        # -0.105 + 0.03, -0.113,
+        # -0.105 + 0.03, -0.113,
+        # 0.105 - 0.03, -0.113,
+        # 0.105 - 0.03, -0.113,
         0.105, -0.113, # Top right corner
-        0.105, -0.113 + 0.03,
-        0.105, -0.113 + 0.03,
-        0.105, -0.03,
-        0.105, -0.03,
+        # 0.105, -0.113 + 0.03,
+        # 0.105, -0.113 + 0.03,
+        # 0.105, -0.03,
+        # 0.105, -0.03,
         0.105, 0.0, # Middle right coner
-        0.105 - 0.03 * sin(deg_to_rad(25.31)), 0.03 * cos(deg_to_rad(25.31)),
-        0.105 - 0.03 * sin(deg_to_rad(25.31)), 0.03 * cos(deg_to_rad(25.31)),
-        0.06638 + 0.03 * sin(deg_to_rad(25.31)), 0.08 - 0.03 * cos(deg_to_rad(25.31)),
-        0.06638 + 0.03 * sin(deg_to_rad(25.31)), 0.08 - 0.03 * cos(deg_to_rad(25.31)),
+        # 0.105 - 0.03 * sin(deg_to_rad(25.31)), 0.03 * cos(deg_to_rad(25.31)),
+        # 0.105 - 0.03 * sin(deg_to_rad(25.31)), 0.03 * cos(deg_to_rad(25.31)),
+        # 0.06638 + 0.03 * sin(deg_to_rad(25.31)), 0.08 - 0.03 * cos(deg_to_rad(25.31)),
+        # 0.06638 + 0.03 * sin(deg_to_rad(25.31)), 0.08 - 0.03 * cos(deg_to_rad(25.31)),
         0.06638, 0.08, # Bottom right corner
-        0.06638 - 0.03, 0.08,
-        0.06638 - 0.03, 0.08,
-        -0.06638 + 0.03, 0.08,
-        -0.06638 + 0.03, 0.08,
+        # 0.06638 - 0.03, 0.08,
+        # 0.06638 - 0.03, 0.08,
+        # -0.06638 + 0.03, 0.08,
+        # -0.06638 + 0.03, 0.08,
         -0.06638,  0.08, # Bottom left corner
-        -0.06638 - 0.03 * sin(deg_to_rad(25.31)), 0.08 - 0.03 * cos(deg_to_rad(25.31)),
-        -0.06638 - 0.03 * sin(deg_to_rad(25.31)), 0.08 - 0.03 * cos(deg_to_rad(25.31)),
-        -0.105 + 0.03 * sin(deg_to_rad(25.31)), 0.03 * cos(deg_to_rad(25.31)),
-        -0.105 + 0.03 * sin(deg_to_rad(25.31)), 0.03 * cos(deg_to_rad(25.31)),
+        # -0.06638 - 0.03 * sin(deg_to_rad(25.31)), 0.08 - 0.03 * cos(deg_to_rad(25.31)),
+        # -0.06638 - 0.03 * sin(deg_to_rad(25.31)), 0.08 - 0.03 * cos(deg_to_rad(25.31)),
+        # -0.105 + 0.03 * sin(deg_to_rad(25.31)), 0.03 * cos(deg_to_rad(25.31)),
+        # -0.105 + 0.03 * sin(deg_to_rad(25.31)), 0.03 * cos(deg_to_rad(25.31)),
         -0.105, 0.0, # Middle left coner
-        -0.105, - 0.03,
-        -0.105, - 0.03
+        # -0.105, - 0.03,
+        # -0.105, - 0.03
     ]}
 
     gear_radii_ = {SlotInfo.SMALL: 0.032,
@@ -274,29 +337,85 @@ class TrayCanvas(tk.Canvas):
                         'sg_2': (0.045, 0.045),
                     }}
     
+    tray_colors_ = {
+        Tray.SMALL_GEAR_TRAY: "red",
+        Tray.MEDIUM_GEAR_TRAY: "green",
+        Tray.LARGE_GEAR_TRAY: "blue",
+        Tray.M2L1_KIT_TRAY: "black",
+        Tray.S2L2_KIT_TRAY: "yellow"
+    }
+    
     def __init__(self, frame):
         super().__init__(frame, height=400, width=400, bd = 0, highlightthickness=0)
-        self.conversion_factor: Optional[float] = 684.6970215679562
+        self.global_conversion_factor: Optional[float] = 684.6970215679562
+        self.conversion_factor = 684.6970215679562
         self.trays_info_recieved = False
         self.tray_tranforms: Optional[list[Transform]] = None
         self.all_trays: Optional[list[Tray]] = None
         self.width: Optional[int] = None
+        self.side_canvas = False
     
     def update_canvas(self):
         self.delete("all")
         if self.conversion_factor is not None and self.trays_info_recieved:
-            self.configure(width=self.width)
+            if self.side_canvas:
+                self.conversion_factor = self.global_conversion_factor / 4
+                try:
+                    self.configure(height=100, width=self.width/4)
+                except:
+                    self.configure(height=100, width=100)
+            else:
+                self.conversion_factor = copy(self.global_conversion_factor)
+                self.configure(height=400, width=self.width)
             for tray in self.all_trays:
                 self.draw_tray(tray)
+    
+    def round_shape(self, points: list[float], radius: float):
+        rounded_points = []
+        print(points)
+        for i in range(0, len(points), 2):
+            p_1 = (points[i], points[i+1])
+            p_2 = (points[(i+2)%len(points)], points[(i+3)%len(points)])
+            try:
+                angle = atan((p_2[1] - p_1[1])/(p_2[0] - p_1[0]))
+            except:
+                angle = pi/2
+            rounded_points.append(p_1[0])
+            rounded_points.append(p_1[1])
+            for _ in range(2):
+                if p_1[0] < p_2[0]:
+                    rounded_points.append(p_1[0] + abs(radius * cos(angle)))
+                else:
+                    rounded_points.append(p_1[0] - abs(radius * cos(angle)))
+                
+                if p_1[1] < p_2[1]:
+                    rounded_points.append(p_1[1] + abs(radius * sin(angle)))
+                else:
+                    rounded_points.append(p_1[1] - abs(radius * sin(angle)))
+
+            for _ in range(2):
+                if p_2[0] < p_1[0]:
+                    rounded_points.append(p_2[0] + abs(radius * cos(angle)))
+                else:
+                    rounded_points.append(p_2[0] - abs(radius * cos(angle)))
+                
+                if p_2[1] < p_1[1]:
+                    rounded_points.append(p_2[1] + abs(radius * sin(angle)))
+                else:
+                    print(radius * sin(angle))
+                    rounded_points.append(p_2[1] - abs(radius * sin(angle)))
+        return rounded_points
     
     def draw_tray(self, tray: Tray):
         c_x = int(tray.transform_stamped.transform.translation.x * self.conversion_factor)
         c_y = int(tray.transform_stamped.transform.translation.y * self.conversion_factor)
         if tray.identifier not in TrayCanvas.tray_points_.keys():
             return
-        points = [TrayCanvas.tray_points_[tray.identifier][i] * self.conversion_factor + (c_x, c_y)[i%2] for i in range(len(TrayCanvas.tray_points_[tray.identifier]))]
+        points = self.round_shape(TrayCanvas.tray_points_[tray.identifier], 0.03)
+        points = [points[i] * self.conversion_factor + (c_x, c_y)[i%2] for i in range(len(points))]
         self.rotate_shape((c_x, c_y), points, self.get_tray_angle(tray.transform_stamped.transform.rotation))
-        self.create_polygon(points, fill="#FF0000", smooth=True)
+        print(TrayCanvas.tray_colors_[tray.identifier])
+        self.create_polygon(points, fill=TrayCanvas.tray_colors_[tray.identifier], smooth=True)
         for slot in tray.slots:
             if slot.occupied:
                 x_coord = c_x + TrayCanvas.gear_offsets_[tray.identifier][slot.name][0] * self.conversion_factor
