@@ -35,47 +35,30 @@ class GuiClass(Node):
         # self.main_wind.resizable(False, False)
 
         self.img_max_height = 400
-        self.main_wind.grid_rowconfigure([i for i in range(8)], weight=1)
-        self.main_wind.grid_columnconfigure((0,1,2), weight=1)
+        self.main_wind.grid_rowconfigure([i for i in range(5)], weight=1)
+        self.main_wind.grid_columnconfigure((1,2,3), weight=1)
 
         self.bridge = CvBridge()
 
-        # Locate Trays widgets
-        self.locate_trays_frame = ctk.CTkFrame(self.main_wind, 200, 800, fg_color="#EBEBEB")
-        self.locate_trays_vars = {vision_system: ctk.StringVar(value="0") for vision_system in GuiClass.vision_systems_}
-        self.locate_trays_cbs_: dict[str: ctk.CTkCheckBox] = {}
-        self.locate_trays_label = ctk.CTkLabel(self.locate_trays_frame, text="Select the vision systems to locate trays for")
-        self.locate_trays_label.pack(pady=50)
-        row = 1
-        for vision_system in GuiClass.vision_systems_:
-            self.locate_trays_cbs_[vision_system] = ctk.CTkCheckBox(self.locate_trays_frame,text=vision_system, variable=self.locate_trays_vars[vision_system], onvalue="1", offvalue="0", height=1, width=20)
-            self.locate_trays_cbs_[vision_system].pack(pady=30, ipadx=15, expand=True)
-            row += 1
-        self.locate_trays_button = ctk.CTkButton(self.locate_trays_frame, text="Locate trays", command=self.locate_trays)
-        self.locate_trays_button.pack(pady=50)
-        self.locate_trays_frame.grid(column = 0, row = 2, rowspan=6, padx=20)
+        s = ttk.Style()
+        s.theme_use('clam')
+        s.configure('TNotebook', font='Arial Bold')
 
+        self.notebook = ttk.Notebook(self.main_wind)
 
-        # Visualization menu widgets
-        vision_selection_label = ctk.CTkLabel(self.main_wind, text="Select the vision system for the live view")
-        vision_selection_label.grid(column = 1, row = 0, pady=1, sticky="ew")
-        self.vision_selection = ctk.StringVar(value=GuiClass.vision_systems_[0])
-        self.vision_selection_menu = ctk.CTkOptionMenu(self.main_wind, variable=self.vision_selection, values=GuiClass.vision_systems_)
-        self.vision_selection_menu.grid(column = 1, row = 1, pady = 1, sticky="ew")
+        self.visualization_frame = ctk.CTkFrame(self.notebook, width = 1200, height=950, fg_color="#EBEBEB")
+        self.visualization_frame.pack(fill='both', expand=True)
+        self.visualization_frame.grid_rowconfigure([i for i in range(8)], weight=1)
+        self.visualization_frame.grid_columnconfigure((0, 1, 2), weight=1)
+        self.notebook.add(self.visualization_frame, text="Visualization")
+        self.add_visualization_widgets_to_frame()
 
-        self.center_frame = ctk.CTkFrame(self.main_wind, 600, 900, fg_color="#EBEBEB")
-        self.live_image_label = LiveImage(self.center_frame)
-        self.live_image_label.pack(pady=1, padx=20)
-        self.center_frame.grid(column = 1, row = 2, rowspan=6, padx=20)
+        self.services_frame = ctk.CTkFrame(self.notebook, width = 1200, height=950, fg_color="#EBEBEB")
+        self.services_frame.pack(fill='both', expand=True)
+        self.notebook.add(self.services_frame, text="Services")
+        self.add_services_widgets_to_frame()
 
-        # Subcanvas frame
-        self.visualization_frame = ctk.CTkFrame(self.main_wind, 400, 900, fg_color="#EBEBEB")
-        self.visualization_frame.grid(column = 2, row = 2, rowspan=8, padx=20)
-
-        self.visualization_canvases = {vision_system: TrayCanvas(self.main_wind) for vision_system in GuiClass.vision_systems_}
-        for vision_system in GuiClass.vision_systems_:
-            self.visualization_canvases[vision_system].bind('<Button-1>', partial(self.vis_clicked, vision_system))
-        self.visualization_labels: list[ctk.CTkLabel] = []
+        self.notebook.grid(pady=10,column=2, row=2, sticky=tk.E+tk.W+tk.N+tk.S)
         
         # Subscribers and clients
         self.image_subs = {}
@@ -100,10 +83,51 @@ class GuiClass(Node):
                 LocateTrays,
                 f'{GuiClass.service_headers_[i]}/trays_info'
             )
+
+    def add_visualization_widgets_to_frame(self):
+        # Locate Trays widgets
+        self.locate_trays_frame = ctk.CTkFrame(self.visualization_frame, 200, 800, fg_color="#EBEBEB")
+        self.locate_trays_vars = {vision_system: ctk.StringVar(value="0") for vision_system in GuiClass.vision_systems_}
+        self.locate_trays_cbs_: dict[str: ctk.CTkCheckBox] = {}
+        self.locate_trays_label = ctk.CTkLabel(self.locate_trays_frame, text="Select the vision systems to locate trays for")
+        self.locate_trays_label.pack(pady=50)
+        row = 1
+        for vision_system in GuiClass.vision_systems_:
+            self.locate_trays_cbs_[vision_system] = ctk.CTkCheckBox(self.locate_trays_frame,text=vision_system, variable=self.locate_trays_vars[vision_system], onvalue="1", offvalue="0", height=1, width=20)
+            self.locate_trays_cbs_[vision_system].pack(pady=30, ipadx=15, expand=True)
+            row += 1
+        self.locate_trays_button = ctk.CTkButton(self.locate_trays_frame, text="Locate trays", command=self.locate_trays)
+        self.locate_trays_button.pack(pady=50)
+        self.locate_trays_frame.grid(column = 0, row = 2, rowspan=6, padx=20)
+
+
+        # Visualization menu widgets
+        vision_selection_label = ctk.CTkLabel(self.visualization_frame, text="Select the vision system for the live view")
+        vision_selection_label.grid(column = 1, row = 0, pady=1, sticky="ew")
+        self.vision_selection = ctk.StringVar(value=GuiClass.vision_systems_[0])
+        self.vision_selection_menu = ctk.CTkOptionMenu(self.visualization_frame, variable=self.vision_selection, values=GuiClass.vision_systems_)
+        self.vision_selection_menu.grid(column = 1, row = 1, pady = 1, sticky="ew")
+
         self.most_recent_imgs: dict[str: Optional[ctk.CTkImage]] = {vision_system: None for vision_system in GuiClass.vision_systems_}
-        
+        self.center_visualization_frame = ctk.CTkFrame(self.visualization_frame, 600, 900, fg_color="#EBEBEB")
+        self.live_image_label = LiveImage(self.center_visualization_frame)
+        self.live_image_label.pack(pady=1, padx=20)
+        self.center_visualization_frame.grid(column = 1, row = 2, rowspan=6, padx=20)
+
+        # Subcanvas frame
+        self.subcanvas_frame = ctk.CTkFrame(self.visualization_frame, 400, 900, fg_color="#EBEBEB")
+        self.subcanvas_frame.grid(column = 2, row = 2, rowspan=8, padx=20)
+
+        self.visualization_canvases = {vision_system: TrayCanvas(self.visualization_frame) for vision_system in GuiClass.vision_systems_}
+        for vision_system in GuiClass.vision_systems_:
+            self.visualization_canvases[vision_system].bind('<Button-1>', partial(self.vis_clicked, vision_system))
+        self.visualization_labels: list[ctk.CTkLabel] = []
+
         self.show_all_canvases(1,1,1)
         self.vision_selection.trace_add("write", self.show_all_canvases)
+    
+    def add_services_widgets_to_frame(self):
+        pass
 
     def image_cb(self, vision_system: str, msg: ImageMsg):
         cv_image = self.bridge.imgmsg_to_cv2(msg, "rgb8")
@@ -120,7 +144,6 @@ class GuiClass(Node):
 
 
     def trays_cb_(self, vision_system: str, msg: Trays):
-        self.get_logger().info(vision_system)
         all_trays: list[Tray] = msg.kit_trays + msg.part_trays
         self.visualization_canvases[vision_system].trays_info_recieved = True
         self.visualization_canvases[vision_system].all_trays = all_trays
@@ -162,8 +185,8 @@ class GuiClass(Node):
         
         self.visualization_canvases[self.vision_selection.get()].side_canvas = False
         self.visualization_canvases[self.vision_selection.get()].update_canvas()
-        self.visualization_canvases[self.vision_selection.get()].pack(in_=self.center_frame, pady=20, padx=20)
-        self.visualization_labels.append(ctk.CTkLabel(self.center_frame, text=self.vision_selection.get()))
+        self.visualization_canvases[self.vision_selection.get()].pack(in_=self.center_visualization_frame, pady=20, padx=20)
+        self.visualization_labels.append(ctk.CTkLabel(self.center_visualization_frame, text=self.vision_selection.get()))
         self.visualization_labels[-1].pack(pady=5, padx=20)
 
         current_row = 0
@@ -171,10 +194,10 @@ class GuiClass(Node):
             if vision_system != self.vision_selection.get():
                 self.visualization_canvases[vision_system].side_canvas = True
                 self.visualization_canvases[vision_system].update_canvas()
-                self.visualization_canvases[vision_system].grid(in_=self.visualization_frame, column = 0, row = current_row, pady=5, padx=20, sticky="ew")
+                self.visualization_canvases[vision_system].grid(in_=self.subcanvas_frame, column = 0, row = current_row, pady=5, padx=20, sticky="ew")
                 current_row += 1
-                self.visualization_labels.append(ctk.CTkLabel(self.visualization_frame, text=vision_system))
-                self.visualization_labels[-1].grid(in_=self.visualization_frame, column = 0, row = current_row, pady=5, padx=20, sticky="ew")
+                self.visualization_labels.append(ctk.CTkLabel(self.subcanvas_frame, text=vision_system))
+                self.visualization_labels[-1].grid(in_=self.subcanvas_frame, column = 0, row = current_row, pady=5, padx=20, sticky="ew")
                 current_row += 1
 
     def vis_clicked(self, vision_system, event):
