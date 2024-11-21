@@ -47,7 +47,7 @@ class MinimalPublisher(Node):
         second_tray.transform_stamped.transform.translation.x = 0.25
         second_tray.transform_stamped.transform.translation.y = 0.3
         
-        x, y, z, w = PyKDL.Rotation.RPY(0.0, 0.0, 1.571).GetQuaternion()
+        x, y, z, w = PyKDL.Rotation.RPY(0.0, 0.0, 0.75).GetQuaternion()
 
         second_tray.transform_stamped.transform.rotation.x = x
         second_tray.transform_stamped.transform.rotation.y = y

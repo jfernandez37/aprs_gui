@@ -33,6 +33,7 @@ ament_python_install_package(${PROJECT_NAME} SCRIPTS_DESTINATION lib/${PROJECT_N
 # Install Python executables
 install(PROGRAMS
   nodes/gui_node.py
+  nodes/controllers.py
   nodes/image_test_node.py
   nodes/test_gui_node.py
   nodes/publish_dummy_trays.py
