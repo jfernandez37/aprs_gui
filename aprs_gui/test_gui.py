@@ -195,38 +195,38 @@ class LiveImage(ctk.CTkLabel):
 
 class TrayCanvas(tk.Canvas):
     tray_points_ = {Tray.SMALL_GEAR_TRAY: [
-        -0.08, -0.08,
-        -0.08, 0.08,
-        0.08, 0.08,
-        0.08, -0.08
+        (-0.08, -0.08),
+        (-0.08, 0.08),
+        (0.08, 0.08),
+        (0.08, -0.08)
     ],
     Tray.MEDIUM_GEAR_TRAY: [
-        -0.098, -0.098,
-        -0.098, 0.098,
-        0.098, 0.098,
-        0.098, -0.098
+        (-0.098, -0.098),
+        (-0.098, 0.098),
+        (0.098, 0.098),
+        (0.098, -0.098)
     ],
     Tray.LARGE_GEAR_TRAY: [
-        -0.105, -0.24,
-        -0.105, 0.113,
-        0.105, 0.113,
-        0.105, -0.24
+        (-0.105, -0.24),
+        (-0.105, 0.113),
+        (0.105, 0.113),
+        (0.105, -0.24)
     ],
     Tray.M2L1_KIT_TRAY: [
-        -0.108, -0.062, # Top left corner
-        0.108, -0.062, # Top right corner
-        0.108, 0.05225, # Bottom right corner
-        0.019, 0.128, # Very bottom right corner
-        -0.019, 0.128, # Very bottom left corner
-        -0.108, 0.05225, # Bottom left corner
+        (-0.108, -0.062), # Top left corner
+        (0.108, -0.062), # Top right corner
+        (0.108, 0.05225), # Bottom right corner
+        (0.019, 0.128), # Very bottom right corner
+        (-0.019, 0.128), # Very bottom left corner
+        (-0.108, 0.05225), # Bottom left corner
     ],
     Tray.S2L2_KIT_TRAY: [
-        -0.105, -0.113, # Top left corner
-        0.105, -0.113, # Top right corner
-        0.105, 0.0, # Middle right coner
-        0.06638, 0.08, # Bottom right corner
-        -0.06638,  0.08, # Bottom left corner
-        -0.105, 0.0, # Middle left coner
+        (-0.105, -0.113), # Top left corner
+        (0.105, -0.113), # Top right corner
+        (0.105, 0.0), # Middle right coner
+        (0.06638, 0.08), # Bottom right corner
+        (-0.06638,  0.08), # Bottom left corner
+        (-0.105, 0.0), # Middle left coner
     ]}
 
     gear_radii_ = {SlotInfo.SMALL: 0.032,
@@ -270,7 +270,7 @@ class TrayCanvas(tk.Canvas):
     }
     
     def __init__(self, frame):
-        super().__init__(frame, height=150, width=200, bd = 0, highlightthickness=0)
+        super().__init__(frame, height=150, width=150, bd = 0, highlightthickness=0)
         self.global_conversion_factor: Optional[float] = 684.6970215679562
         self.conversion_factor = 684.6970215679562
         self.trays_info_recieved = False
@@ -281,25 +281,26 @@ class TrayCanvas(tk.Canvas):
     
     def update_canvas(self):
         self.delete("all")
+        if self.side_canvas:
+            try:
+                self.configure(height=150, width=self.width * 3 / 8)
+            except:
+                self.configure(height=150, width=150)
+        else:
+            self.configure(height=400, width=400)
         if self.conversion_factor is not None and self.trays_info_recieved:
             if self.side_canvas:
                 self.conversion_factor = self.global_conversion_factor * 3 / 8
-                try:
-                    self.configure(height=150, width=self.width * 3 / 8)
-                except:
-                    self.configure(height=150, width=150)
             else:
                 self.conversion_factor = copy(self.global_conversion_factor)
-                # self.configure(height=400, width=self.width)
-                self.configure(height=400, width=400)
             for tray in self.all_trays:
                 self.draw_tray(tray)
     
     def round_shape(self, points: list[float], radius: float):
         rounded_points = []
-        for i in range(0, len(points), 2):
-            p_1 = (points[i], points[i+1])
-            p_2 = (points[(i+2)%len(points)], points[(i+3)%len(points)])
+        for i in range(0, len(points)):
+            p_1 = points[i]
+            p_2 = points[(i+1)%len(points)]
             try:
                 angle = atan((p_2[1] - p_1[1])/(p_2[0] - p_1[0]))
             except:
