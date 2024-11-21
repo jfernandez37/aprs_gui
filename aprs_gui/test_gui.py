@@ -63,14 +63,16 @@ class GuiClass(Node):
         self.vision_selection_menu = ctk.CTkOptionMenu(self.main_wind, variable=self.vision_selection, values=GuiClass.vision_systems_)
         self.vision_selection_menu.grid(column = 1, row = 1, pady = 1, sticky="ew")
 
-        self.live_image_label = LiveImage(self.main_wind)
-        self.live_image_label.grid(column = 1, row = 2, pady=1, padx=20, sticky="ew")
+        self.center_frame = ctk.CTkFrame(self.main_wind, 600, 900, fg_color="#EBEBEB")
+        self.live_image_label = LiveImage(self.center_frame)
+        self.live_image_label.pack(pady=1, padx=20)
+        self.center_frame.grid(column = 1, row = 2, rowspan=6, padx=20)
 
+        # Subcanvas frame
         self.visualization_frame = ctk.CTkFrame(self.main_wind, 400, 900, fg_color="#EBEBEB")
         self.visualization_frame.grid(column = 2, row = 2, rowspan=8, padx=20)
 
         self.visualization_canvases = {vision_system: TrayCanvas(self.main_wind) for vision_system in GuiClass.vision_systems_}
-        self.visualization_canvases[self.vision_selection.get()].grid(column = 1, row = 3, rowspan=3, pady=1, padx=20, sticky="ew")
         for vision_system in GuiClass.vision_systems_:
             self.visualization_canvases[vision_system].bind('<Button-1>', partial(self.vis_clicked, vision_system))
         self.visualization_labels: list[ctk.CTkLabel] = []
@@ -151,16 +153,18 @@ class GuiClass(Node):
         self.live_image_label.current_image = self.most_recent_imgs[self.vision_selection.get()]
         for canvas in self.visualization_canvases.values():
             canvas.grid_forget()
+            canvas.pack_forget()
 
         for label in self.visualization_labels:
             label.grid_forget()
+            label.pack_forget()
         self.visualization_labels.clear()
         
         self.visualization_canvases[self.vision_selection.get()].side_canvas = False
         self.visualization_canvases[self.vision_selection.get()].update_canvas()
-        self.visualization_canvases[self.vision_selection.get()].grid(in_=self.main_wind, column = 1, row = 3, rowspan=3, pady=20, padx=20, sticky="ew")
-        self.visualization_labels.append(ctk.CTkLabel(self.main_wind, text=self.vision_selection.get()))
-        self.visualization_labels[-1].grid(column = 1, row = 7, pady=5, padx=20, sticky="ew")
+        self.visualization_canvases[self.vision_selection.get()].pack(in_=self.center_frame, pady=20, padx=20)
+        self.visualization_labels.append(ctk.CTkLabel(self.center_frame, text=self.vision_selection.get()))
+        self.visualization_labels[-1].pack(pady=5, padx=20)
 
         current_row = 0
         for vision_system in GuiClass.vision_systems_:
