@@ -2,6 +2,7 @@
 import rclpy
 from rclpy.node import Node
 from random import random, randint
+import PyKDL
 
 from aprs_interfaces.msg import Trays, Tray, SlotInfo
 
@@ -26,27 +27,39 @@ class MinimalPublisher(Node):
         first_tray.transform_stamped.transform.translation.x = 0.25
         first_tray.transform_stamped.transform.translation.y = 0.15
 
-        first_tray.transform_stamped.transform.rotation.x = 0.0
-        first_tray.transform_stamped.transform.rotation.y = 0.0
-        first_tray.transform_stamped.transform.rotation.z = 0.0
-        first_tray.transform_stamped.transform.rotation.w = 1.0
+        x, y, z, w = PyKDL.Rotation.RPY(0.0, 0.0, 1.571).GetQuaternion()
+
+        first_tray.transform_stamped.transform.rotation.x = x
+        first_tray.transform_stamped.transform.rotation.y = y
+        first_tray.transform_stamped.transform.rotation.z = z
+        first_tray.transform_stamped.transform.rotation.w = w
+
+        for i in range(2):
+            slot = SlotInfo()
+            slot.occupied = True
+            slot.size = SlotInfo.LARGE
+            slot.name = f"slot_{i+1}"
+            first_tray.slots.append(slot)
 
         second_tray = Tray()
         second_tray.identifier = Tray.MEDIUM_GEAR_TRAY
         second_tray.name = "mt_gear_tray_ 02"
         second_tray.transform_stamped.transform.translation.x = 0.25
         second_tray.transform_stamped.transform.translation.y = 0.3
-        second_tray.transform_stamped.transform.rotation.x = 0.0
-        second_tray.transform_stamped.transform.rotation.y = 0.0
-        second_tray.transform_stamped.transform.rotation.z = 0.0
-        second_tray.transform_stamped.transform.rotation.w = 1.0
+        
+        x, y, z, w = PyKDL.Rotation.RPY(0.0, 0.0, 1.571).GetQuaternion()
 
-        # for i in range(4):
-        #     slot = SlotInfo()
-        #     slot.occupied = random() > 0.6
-        #     slot.size = SlotInfo.LARGE if i < 2 else SlotInfo.SMALL
-        #     slot.name = f"lg_{i%2+1}" if i < 2 else f"sg_{i%2+1}"
-        #     first_tray.slots.append(slot)
+        second_tray.transform_stamped.transform.rotation.x = x
+        second_tray.transform_stamped.transform.rotation.y = y
+        second_tray.transform_stamped.transform.rotation.z = z
+        second_tray.transform_stamped.transform.rotation.w = w
+
+        for i in range(4):
+            slot = SlotInfo()
+            slot.occupied = True
+            slot.size = SlotInfo.MEDIUM
+            slot.name = f"slot_{i+1}"
+            second_tray.slots.append(slot)
 
         msg.part_trays.append(first_tray)
         msg.part_trays.append(second_tray)

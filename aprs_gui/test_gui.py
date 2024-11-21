@@ -27,7 +27,8 @@ def deg_to_rad(deg: float):
         return deg * pi / 180
 
 class GuiClass(Node):
-    vision_systems_ = ["fanuc_vision", "motoman_vision", "teach_table_vision", "fanuc_conveyor", "motoman_conveyor"]
+    # vision_systems_ = ["fanuc_vision", "motoman_vision", "teach_table_vision", "fanuc_conveyor", "motoman_conveyor"]
+    vision_systems_ = ["fanuc_vision"]
     service_headers_ = ["/fanuc/table_vision", "/motoman/table_vision", "/teach/table_vision", "/fanuc/conveyor_vision", "/motoman/conveyor_vision"]
     robots_ = ["fanuc", "motoman"]
     service_types_ = ["move_to_named_pose", "pick_from_slot", "place_in_slot"]
@@ -40,8 +41,8 @@ class GuiClass(Node):
         # self.main_wind.resizable(False, False)
 
         self.img_max_height = 400
-        self.main_wind.grid_rowconfigure([i for i in range(5)], weight=1)
-        self.main_wind.grid_columnconfigure((1,2,3), weight=1)
+        # self.main_wind.grid_rowconfigure([i for i in range(5)], weight=1)
+        # self.main_wind.grid_columnconfigure((1,2,3), weight=1)
 
         self.bridge = CvBridge()
         
@@ -87,27 +88,30 @@ class GuiClass(Node):
 
         frames_timer = self.create_timer(0.5, self.get_current_frames)
 
-        s = ttk.Style()
-        s.theme_use('clam')
-        s.configure('TNotebook', font='Arial Bold')
+        self.fanuc_canvas = TrayCanvas(self.main_wind)
+        self.fanuc_canvas.pack(pady=50)
 
-        self.notebook = ttk.Notebook(self.main_wind)
+        # s = ttk.Style()
+        # s.theme_use('clam')
+        # s.configure('TNotebook', font='Arial Bold')
 
-        self.visualization_frame = ctk.CTkFrame(self.notebook, width = 1200, height=950, fg_color="#EBEBEB")
-        self.visualization_frame.pack(fill='both', expand=True)
-        self.visualization_frame.grid_rowconfigure([i for i in range(8)], weight=1)
-        self.visualization_frame.grid_columnconfigure((0, 1, 2), weight=1)
-        self.notebook.add(self.visualization_frame, text="Visualization")
-        self.add_visualization_widgets_to_frame()
+        # self.notebook = ttk.Notebook(self.main_wind)
 
-        self.services_frame = ctk.CTkFrame(self.notebook, width = 1200, height=950, fg_color="#EBEBEB")
-        self.services_frame.pack(fill='both', expand=True)
-        self.services_frame.grid_rowconfigure([i for i in range(8)], weight=1)
-        self.services_frame.grid_columnconfigure((0,1,2), weight=1)
-        self.notebook.add(self.services_frame, text="Services")
-        self.add_services_widgets_to_frame()
+        # self.visualization_frame = ctk.CTkFrame(self.notebook, width = 1200, height=950, fg_color="#EBEBEB")
+        # self.visualization_frame.pack(fill='both', expand=True)
+        # self.visualization_frame.grid_rowconfigure([i for i in range(8)], weight=1)
+        # self.visualization_frame.grid_columnconfigure((0, 1, 2), weight=1)
+        # self.notebook.add(self.visualization_frame, text="Visualization")
+        # self.add_visualization_widgets_to_frame()
 
-        self.notebook.grid(pady=10,column=2, row=2, sticky=tk.E+tk.W+tk.N+tk.S)
+        # self.services_frame = ctk.CTkFrame(self.notebook, width = 1200, height=950, fg_color="#EBEBEB")
+        # self.services_frame.pack(fill='both', expand=True)
+        # self.services_frame.grid_rowconfigure([i for i in range(8)], weight=1)
+        # self.services_frame.grid_columnconfigure((0,1,2), weight=1)
+        # self.notebook.add(self.services_frame, text="Services")
+        # self.add_services_widgets_to_frame()
+
+        # self.notebook.grid(pady=10,column=2, row=2, sticky=tk.E+tk.W+tk.N+tk.S)
 
     def add_visualization_widgets_to_frame(self):
         # Locate Trays widgets
@@ -123,33 +127,33 @@ class GuiClass(Node):
             row += 1
         self.locate_trays_button = ctk.CTkButton(self.locate_trays_frame, text="Locate trays", command=self.locate_trays)
         self.locate_trays_button.pack(pady=50)
-        self.locate_trays_frame.grid(column = 0, row = 2, rowspan=6, padx=20)
+        # self.locate_trays_frame.grid(column = 0, row = 2, rowspan=6, padx=20)
 
 
         # Visualization menu widgets
-        vision_selection_label = ctk.CTkLabel(self.visualization_frame, text="Select the vision system for the live view")
-        vision_selection_label.grid(column = 1, row = 0, pady=1, sticky="ew")
+        # vision_selection_label = ctk.CTkLabel(self.visualization_frame, text="Select the vision system for the live view")
+        # vision_selection_label.grid(column = 1, row = 0, pady=1, sticky="ew")
         self.vision_selection = ctk.StringVar(value=GuiClass.vision_systems_[0])
-        self.vision_selection_menu = ctk.CTkOptionMenu(self.visualization_frame, variable=self.vision_selection, values=GuiClass.vision_systems_)
-        self.vision_selection_menu.grid(column = 1, row = 1, pady = 1, sticky="ew")
+        # self.vision_selection_menu = ctk.CTkOptionMenu(self.visualization_frame, variable=self.vision_selection, values=GuiClass.vision_systems_)
+        # self.vision_selection_menu.grid(column = 1, row = 1, pady = 1, sticky="ew")
 
         self.most_recent_imgs: dict[str: Optional[ctk.CTkImage]] = {vision_system: None for vision_system in GuiClass.vision_systems_}
         self.center_visualization_frame = ctk.CTkFrame(self.visualization_frame, 600, 900, fg_color="#EBEBEB")
-        self.live_image_label = LiveImage(self.center_visualization_frame)
-        self.live_image_label.pack(pady=1, padx=20)
+        # self.live_image_label = LiveImage(self.center_visualization_frame)
+        # self.live_image_label.pack(pady=1, padx=20)
         self.center_visualization_frame.grid(column = 1, row = 2, rowspan=6, padx=20)
 
         # Subcanvas frame
         self.subcanvas_frame = ctk.CTkFrame(self.visualization_frame, 400, 900, fg_color="#EBEBEB")
-        self.subcanvas_frame.grid(column = 2, row = 2, rowspan=8, padx=20)
+        # self.subcanvas_frame.grid(column = 2, row = 2, rowspan=8, padx=20)
 
-        self.visualization_canvases = {vision_system: TrayCanvas(self.visualization_frame) for vision_system in GuiClass.vision_systems_}
-        for vision_system in GuiClass.vision_systems_:
-            self.visualization_canvases[vision_system].bind('<Button-1>', partial(self.vis_clicked, vision_system))
-        self.visualization_labels: list[ctk.CTkLabel] = []
+        self.visualization_canvases = {vision_system: TrayCanvas(self.main_wind) for vision_system in ["fanuc_vision"]}
+        # for vision_system in GuiClass.vision_systems_:
+        #     self.visualization_canvases[vision_system].bind('<Button-1>', partial(self.vis_clicked, vision_system))
+        # self.visualization_labels: list[ctk.CTkLabel] = []
 
-        self.show_all_canvases(1,1,1)
-        self.vision_selection.trace_add("write", self.show_all_canvases)
+        # self.show_all_canvases(1,1,1)
+        # self.vision_selection.trace_add("write", self.show_all_canvases)
     
     def add_services_widgets_to_frame(self):
 
@@ -282,7 +286,7 @@ class GuiClass(Node):
         cv_image = self.bridge.imgmsg_to_cv2(msg, "rgb8")
         width = int(cv_image.shape[1] * self.img_max_height / cv_image.shape[0])
         
-        self.most_recent_imgs[vision_system] = ctk.CTkImage(Image.fromarray(cv_image), size=(width, 400))
+        self.most_recent_imgs[vision_system] = ctk.CTkImage(Image.fromarray(cv_image), size=(width, self.img_max_height))
         if vision_system == self.vision_selection.get():
             self.live_image_label.current_image = self.live_image_label[vision_system]
 
@@ -294,9 +298,12 @@ class GuiClass(Node):
 
     def trays_cb_(self, vision_system: str, msg: Trays):
         all_trays: list[Tray] = msg.kit_trays + msg.part_trays
-        self.visualization_canvases[vision_system].trays_info_recieved = True
-        self.visualization_canvases[vision_system].all_trays = all_trays
-        self.visualization_canvases[vision_system].update_canvas()
+        # self.visualization_canvases[vision_system].trays_info_recieved = True
+        # self.visualization_canvases[vision_system].all_trays = all_trays
+        # self.visualization_canvases[vision_system].update_canvas()
+        self.fanuc_canvas.trays_info_recieved = True
+        self.fanuc_canvas.all_trays = all_trays
+        self.fanuc_canvas.update_canvas()
     
     def locate_trays(self):
         c = 0
@@ -419,7 +426,7 @@ class TrayCanvas(tk.Canvas):
                     },
                     Tray.LARGE_GEAR_TRAY: {
                         'slot_1': (-0.052, -0.06),
-                        'slot_2': (0.052, 0.06),
+                        'slot_2': (0.052, -0.06),
                     },
                     Tray.M2L1_KIT_TRAY: {
                         'lg_1': (0.0, -0.075),
@@ -468,7 +475,7 @@ class TrayCanvas(tk.Canvas):
             for tray in self.all_trays:
                 self.draw_tray(tray)
     
-    def round_shape(self, points: list[float], radius: float):
+    def round_shape(self, points: list[float], radius: float = 0.03):
         rounded_points = []
         for i in range(len(points)):
             p_1 = points[i]
@@ -486,23 +493,29 @@ class TrayCanvas(tk.Canvas):
 
         return rounded_points
     
+    def generate_tray_points(self, center: tuple[float, float], identifier: int, angle: float):
+        points = self.round_shape(TrayCanvas.tray_points_[identifier]) 
+        points = [points[i] + center[i%2] for i in range(len(points))]
+        points = [p * self.conversion_factor for p in points]
+        self.rotate_shape((center[0] * self.conversion_factor, center[1] * self.conversion_factor), points, angle)
+        return points
+
     def draw_tray(self, tray: Tray):
+        if tray.identifier not in TrayCanvas.tray_points_.keys():
+            return
+
         # Gets the center point for the tray
         c_x = tray.transform_stamped.transform.translation.x
         c_y = tray.transform_stamped.transform.translation.y
-        if tray.identifier not in TrayCanvas.tray_points_.keys():
-            return
-        points = self.round_shape(TrayCanvas.tray_points_[tray.identifier], 0.03) 
-        points = [points[i] + (c_x, c_y)[i%2] for i in range(len(points))]
-        points = [p * self.conversion_factor for p in points]
-        self.rotate_shape((c_x, c_y), points, self.get_tray_angle(tray.transform_stamped.transform.rotation))
+        
+        points = self.generate_tray_points((c_x, c_y), tray.identifier, self.get_tray_angle(tray.transform_stamped.transform.rotation))
         self.create_polygon(points, fill=TrayCanvas.tray_colors_[tray.identifier], smooth=True)
         for slot in tray.slots:
             if slot.occupied:
-                x_coord = c_x + TrayCanvas.gear_offsets_[tray.identifier][slot.name][0] * self.conversion_factor
-                y_coord = c_y + TrayCanvas.gear_offsets_[tray.identifier][slot.name][1] * self.conversion_factor
+                x_coord = (c_x + TrayCanvas.gear_offsets_[tray.identifier][slot.name][0]) * self.conversion_factor
+                y_coord = (c_y + TrayCanvas.gear_offsets_[tray.identifier][slot.name][1]) * self.conversion_factor
                 slot_coords = [x_coord, y_coord]
-                self.rotate_shape((c_x, c_y), slot_coords, self.get_tray_angle(tray.transform_stamped.transform.rotation))
+                self.rotate_shape((c_x * self.conversion_factor, c_y * self.conversion_factor), slot_coords, self.get_tray_angle(tray.transform_stamped.transform.rotation))
                 self.draw_circle(slot_coords[0], slot_coords[1], TrayCanvas.gear_radii_[slot.size] * self.conversion_factor)
     
     def draw_circle(self, c_x, c_y, radius):
