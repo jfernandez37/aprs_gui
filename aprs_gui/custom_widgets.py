@@ -2,13 +2,21 @@ import PyKDL
 import subprocess
 import customtkinter as ctk
 import tkinter as tk
+from tkinter import ttk
 from typing import Optional
 from copy import copy
 from math import sin, cos, atan2
 from time import time
+from ament_index_python.packages import get_package_share_directory
 import re
+from rclpy.node import Node
+from difflib import SequenceMatcher
+import yaml
+from tf2_ros.buffer import Buffer
+from tf2_ros.transform_listener import TransformListener
 
 from aprs_interfaces.msg import Tray, SlotInfo
+from aprs_interfaces.srv import LocateTrays, Pick, Place, MoveToNamedPose
 
 from geometry_msgs.msg import Transform
 
@@ -266,3 +274,223 @@ class RobotStatusFrame(ctk.CTkFrame):
                     self.inactive_controllers_label.configure(text="No controllers active", text_color="green")
             else: 
                 print(f"Not working for {self.robot_}")
+
+class ServicesFrame(ctk.CTkFrame):
+    robots_ = ["fanuc", "motoman"]
+    def __init__(self, frame, node: Node):
+        super().__init__(frame, width = 1200, height=950, fg_color="#EBEBEB")
+        self.grid_rowconfigure((0), weight=1)
+        self.grid_columnconfigure((0, 1), weight=1)
+
+        self.node = node
+
+        self.named_positions = {robot: self.get_named_positions(robot) for robot in ServicesFrame.robots_}
+
+        self.service_clients = {robot: {"move_to_named_pose": self.node.create_client(MoveToNamedPose, f"/{robot}/move_to_named_pose"),
+                              "pick_from_slot": self.node.create_client(Pick, f"/{robot}/pick_from_slot"),
+                              "place_in_slot": self.node.create_client(Place, f"/{robot}/place_in_slot")}
+                              for robot in ServicesFrame.robots_}
+
+        self.robot_selection_frame = ctk.CTkFrame(self, width = 300, height=900, fg_color="#EBEBEB")
+        self.selected_robot = ctk.StringVar(value=ServicesFrame.robots_[0])
+        self.add_robot_selection_widgets()
+
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self.node)
+
+        self.frames_recieved = False
+        
+        frames_dict = yaml.safe_load(self.tf_buffer.all_frames_as_yaml())
+        try:
+            self.frames_list = list(frames_dict.keys())
+            self.frames_recieved = True
+        except:
+            self.frames_list = []
+        
+        frames_timer = self.node.create_timer(0.5, self.get_current_frames)
+
+        self.service_notebook = ttk.Notebook(self)
+
+        self.move_to_named_pose_frame = ctk.CTkFrame(self.service_notebook, width = 700, height=900, fg_color="#EBEBEB")
+        self.move_to_named_pose_frame.pack(fill='both', expand=True)
+        self.move_to_named_pose_frame.pack_propagate(0)
+        self.selected_named_pose = ctk.StringVar()
+        self.service_notebook.add(self.move_to_named_pose_frame, text="Move to Named Pose")
+        self.add_move_to_named_pose_widgets_to_frame()
+
+        self.pick_frame = ctk.CTkFrame(self.service_notebook, width = 700, height=900, fg_color="#EBEBEB")
+        self.pick_frame.pack(fill='both', expand=True)
+        self.pick_frame.pack_propagate(0)
+        self.pick_frame_selection = ctk.StringVar()
+        self.service_notebook.add(self.pick_frame, text="Pick")
+        self.add_pick_widgets_to_frame()
+
+        self.place_frame = ctk.CTkFrame(self.service_notebook, width = 700, height=900, fg_color="#EBEBEB")
+        self.place_frame.pack(fill='both', expand=True)
+        self.place_frame.pack_propagate(0)
+        self.place_frame_selection = ctk.StringVar()
+        self.service_notebook.add(self.place_frame, text="Place")
+        self.add_place_widgets_to_frame()
+
+        self.service_notebook.grid(column=0, row=0, padx=20)
+
+        self.robot_selection_frame.grid(column=1, row=0, padx=20)
+
+        self.pick_frame_selection.trace_add('write', self.only_show_matching_frames)
+
+    def add_robot_selection_widgets(self):
+        ctk.CTkLabel(self.robot_selection_frame, text="Select the robot for the service:").pack(pady=25)
+
+        radio_buttons = []
+        for robot in ServicesFrame.robots_:
+            radio_buttons.append(ctk.CTkRadioButton(self.robot_selection_frame, text=robot, variable=self.selected_robot, value=robot, command=self.reload_services_frames))
+            radio_buttons[-1].pack(pady=5)
+
+    def reload_services_frames(self):
+        for frame in [self.move_to_named_pose_frame, self.pick_frame]:
+            for widget in frame.winfo_children():
+                widget.pack_forget()
+        
+        self.add_move_to_named_pose_widgets_to_frame()
+        self.add_pick_widgets_to_frame()
+    
+    def reload_pick_and_place(self):
+        for frame in [self.pick_frame]:
+            for widget in frame.winfo_children():
+                widget.pack_forget()
+        
+        self.add_pick_widgets_to_frame()
+
+    # ==============================================================
+    #                     Move to named pose
+    # ==============================================================
+    
+    def add_move_to_named_pose_widgets_to_frame(self):
+        if len(self.named_positions[self.selected_robot.get()]) == 0:
+            ctk.CTkLabel(self.move_to_named_pose_frame, text="No named poses found for " + self.selected_robot.get()).pack(pady=10)
+        else:
+            self.selected_named_pose.set(self.named_positions[self.selected_robot.get()][0])
+            ctk.CTkLabel(self.move_to_named_pose_frame, text="Select the pose to move to:").pack(pady=10)
+
+            ctk.CTkOptionMenu(self.move_to_named_pose_frame, variable=self.selected_named_pose, values = self.named_positions[self.selected_robot.get()]).pack(pady=20)
+
+            ctk.CTkButton(self.move_to_named_pose_frame, text="Call Service", command=self.call_move_to_named_pose_service_).pack(pady=10)
+
+    def call_move_to_named_pose_service_(self):
+        move_to_named_pose_request = MoveToNamedPose.Request()
+        move_to_named_pose_request.name = self.selected_named_pose.get()
+
+        future = self.service_clients[self.selected_robot.get()]["move_to_named_pose"].call_async(move_to_named_pose_request)
+
+        start = time()
+        while not future.done():
+            pass
+            if time()-start >= 15.0:
+                self.node.get_logger().warn(f"Unable to move {self.selected_robot.get()} to desired pose")
+                return
+    
+    # ==============================================================
+    #                            Pick
+    # ==============================================================
+    
+    def add_pick_widgets_to_frame(self):
+        if len(self.frames_list) == 0:
+            ctk.CTkLabel(self.pick_frame, text="No frames found").pack(pady=10)
+        else:
+            self.pick_frame_selection.set("")
+            ctk.CTkLabel(self.pick_frame, text="Select the frame for picking:").pack(pady=10)
+
+            self.frame_menu = ctk.CTkComboBox(self.pick_frame, variable=self.pick_frame_selection, values=self.frames_list)
+            self.frame_menu.pack(pady=10)
+
+            ctk.CTkButton(self.pick_frame, text="Call Service", command=self.call_pick_service).pack(pady=10)
+
+    def call_pick_service(self):
+        pick_request = Pick.Request()
+        pick_request.frame_name = self.pick_frame_selection.get()
+
+        future = self.service_clients[self.selected_robot.get()]["pick"].call_async(pick_request)
+
+        start = time()
+        while not future.done():
+            pass
+            if time()-start >= 15.0:
+                self.node.get_logger().warn(f"Unable to pick frame {self.pick_frame_selection} with {self.selected_robot.get()}")
+                return
+    
+    # ==============================================================
+    #                            Place
+    # ==============================================================
+    
+    def add_place_widgets_to_frame(self):
+        if len(self.frames_list) == 0:
+            ctk.CTkLabel(self.place_frame, text="No frames found").pack(pady=10)
+        else:
+            self.place_frame_selection.set("")
+            ctk.CTkLabel(self.place_frame, text="Select the frame for placing:").pack(pady=10)
+
+            self.frame_menu = ctk.CTkComboBox(self.place_frame, variable=self.place_frame_selection, values=self.frames_list)
+            self.frame_menu.pack(pady=10)
+
+            ctk.CTkButton(self.place_frame, text="Call Service", command=self.call_place_service).pack(pady=10)
+
+    def call_place_service(self):
+        place_request = Place.Request()
+        place_request.frame_name = self.place_frame_selection.get()
+
+        future = self.service_clients[self.selected_robot.get()]["place"].call_async(place_request)
+
+        start = time()
+        while not future.done():
+            pass
+            if time()-start >= 15.0:
+                self.node.get_logger().warn(f"Unable to place frame {self.place_frame_selection} with {self.selected_robot.get()}")
+                return
+
+    def get_named_positions(self, robot_name: str):
+        moveit_package = get_package_share_directory(f'{robot_name}_moveit_config')
+        srdf_file_path = moveit_package + f"/config/{robot_name}.srdf"
+        found_named_positions = []
+        with open(srdf_file_path, "+r") as f:
+            for line in f:
+                if "group_state" in line and " name" in line:
+                    found_name = ""
+                    inside_quotes = False
+                    for c in line[line.find(" name"):]:
+                        if c == '"':
+                            if inside_quotes == False:
+                                inside_quotes = True
+                                continue
+                            else:
+                                break
+                        if inside_quotes:
+                            found_name += c
+                    found_named_positions.append(found_name)
+        return found_named_positions
+    
+    def only_show_matching_frames(self, _, __, ___):
+        pass
+        selection = self.pick_frame_selection.get()
+
+        if selection in self.frames_list:
+            self.frame_menu.configure(values = self.frames_list)
+        else:
+            options = []
+            for topic in self.frames_list:
+                if selection.lower() in topic.lower():
+                    options.append(topic)
+                else:
+                    for i in range(len(topic)-len(selection)):
+                        if SequenceMatcher(None, selection.lower(), topic[i:i+len(selection)].lower()).ratio() > 0.6:
+                            options.append(topic)
+            self.frame_menu.configure(values = list(set(options)))
+    
+    def get_current_frames(self):
+        frames_dict = yaml.safe_load(self.tf_buffer.all_frames_as_yaml())
+        try:
+            self.frames_list = list(frames_dict.keys())
+            if not self.frames_recieved:
+                self.reload_pick_and_place()
+                self.frames_recieved = True
+        except:
+            self.frames_list = []
