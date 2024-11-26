@@ -22,9 +22,10 @@ def deg_to_rad(deg: float):
 
 class GuiClass(Node):
     vision_systems_ = ["fanuc_vision", "motoman_vision", "teach_table_vision", "fanuc_conveyor", "motoman_conveyor"]
-    service_headers_ = ["/fanuc/table_vision", "/motoman/table_vision", "/teach/table_vision", "/fanuc/conveyor_vision", "/motoman/conveyor_vision"]
+    service_headers_ = ["/fanuc/table_trays_info", "/motoman/table_trays_info", "/teach/table_trays_info", "/fanuc/conveyor_trays_info", "/motoman/conveyor_trays_info"]
     robots_ = ["fanuc", "motoman"]
     service_types_ = ["move_to_named_pose", "pick_from_slot", "place_in_slot"]
+    locate_trays_services_ = ["/fanuc/locate_trays_on_table", "/motoman/locate_trays_on_table", "/teach/locate_trays_on_table","/fanuc/locate_trays_on_conveyor","/motoman/locate_trays_on_conveyor"]
     def __init__(self):
         super().__init__("test_gui")
         
@@ -53,14 +54,14 @@ class GuiClass(Node):
 
             self.tray_subs[GuiClass.vision_systems_[i]] = self.create_subscription(
                 Trays,
-                f'{GuiClass.service_headers_[i]}/trays_info',
+                GuiClass.service_headers_[i],
                 partial(self.trays_cb_, GuiClass.vision_systems_[i]),
                 qos_profile_default
             )
 
             self.locate_clients[GuiClass.vision_systems_[i]] = self.create_client(
                 LocateTrays,
-                f'{GuiClass.service_headers_[i]}/trays_info'
+                GuiClass.locate_trays_services_[i]
             )
 
         self.joint_states_subs = {}
@@ -71,6 +72,9 @@ class GuiClass(Node):
                 partial(self.joint_state_cb, robot),
                 10
             )
+        
+        self.occupied_slots = {robot: [] for robot in GuiClass.robots_}
+        self.unoccupied_slots = {robot: [] for robot in GuiClass.robots_}
 
         s = ttk.Style()
         s.theme_use('clam')
@@ -165,6 +169,24 @@ class GuiClass(Node):
         self.visualization_canvases[vision_system].trays_info_recieved = True
         self.visualization_canvases[vision_system].all_trays = all_trays
         self.visualization_canvases[vision_system].update_canvas()
+
+        for robot in GuiClass.robots_:
+            if robot in vision_system:
+                for tray in all_trays:
+                    for slot in tray.slots:
+                        if slot.occupied:
+                            self.occupied_slots[robot].append(slot.name)
+                        else:
+                            self.unoccupied_slots[robot].append(slot.name)
+                occupied_refresh = len(self.occupied_slots[robot]) > 0 and len(self.services_frame.occupied_slots[robot]) == 0
+                unoccupied_refresh = len(self.unoccupied_slots[robot]) > 0 and len(self.services_frame.unoccupied_slots[robot]) == 0
+                self.occupied_slots[robot] = list(set(self.occupied_slots[robot]))
+                self.unoccupied_slots[robot] = list(set(self.unoccupied_slots[robot]))
+                self.services_frame.occupied_slots = self.occupied_slots
+                self.services_frame.unoccupied_slots = self.unoccupied_slots
+
+                if occupied_refresh or unoccupied_refresh:
+                    self.services_frame.reload_services_frames()
     
     def joint_state_cb(self, robot: str, msg: JointState):
         self.status_frames[robot].most_recent_time = time()
@@ -180,7 +202,7 @@ class GuiClass(Node):
                 success = True
                 while not future.done():
                     pass
-                    if time()-start >= 1.0:
+                    if time()-start >= 3.0:
                         self.get_logger().warn(f"Unable to locate trays for {vision_system}.\n")
                         success = False
                         break
