@@ -16,40 +16,40 @@ class SimpleGuiClass(Node):
 
         self.main_window = ctk.CTk()
 
-        fanuc_trays_sub = self.create_subscription(
+        motoman_trays_sub = self.create_subscription(
             Trays,
-            "/fanuc/table_trays_info",
-            self.fanuc_trays_cb_,
+            "/motoman/table_trays_info",
+            self.motoman_trays_cb_,
             qos_profile_default
         )
 
-        video_stream = "http://192.168.1.104/mjpg/video.mjpg"
+        video_stream = "http://192.168.1.110/mjpg/video.mjpg"
 
         # Stream Handler
         share_path = get_package_share_directory('aprs_vision')
-        calibration_filepath = os.path.join(share_path, 'config', 'fanuc_table_calibration.npz')
+        calibration_filepath = os.path.join(share_path, 'config', 'motoman_table_calibration.npz')
 
         self.stream_handler = StreamHandler(video_stream, calibration_filepath)
         self.img_max_height = 400
 
         self.create_timer(0.05, self.update_img)
 
-        self.fanuc_canvas = TrayCanvas(self.main_window)
-        self.fanuc_canvas.pack(padx=10,sticky='ew')
+        self.motoman_canvas = TrayCanvas(self.main_window)
+        self.motoman_canvas.pack(padx=10)
 
-        self.fanuc_img = LiveImage(self.main_window)
-        self.fanuc_img.pack(padx=10,sticky='we')
+        self.motoman_img = LiveImage(self.main_window)
+        self.motoman_img.pack(padx=10)
 
     def update_img(self):
         cv_image = self.stream_handler.read_frame()
         cv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
         width = int(cv_image.shape[1] * self.img_max_height / cv_image.shape[0])
-        self.fanuc_img.current_image = ctk.CTkImage(Image.fromarray(cv_image), size=(width, self.img_max_height))
+        self.motoman_img.current_image = ctk.CTkImage(Image.fromarray(cv_image), size=(width, self.img_max_height))
 
         height_in_inches = cv_image.shape[0] / 30
         height_in_meters = height_in_inches * 0.0254
-        self.fanuc_canvas.conversion_factor = 400 / height_in_meters
-        self.fanuc_canvas.width = width
+        self.motoman_canvas.conversion_factor = 400 / height_in_meters
+        self.motoman_canvas.width = width
         '''
         cv_image = self.bridge.imgmsg_to_cv2(msg, "rgb8")
         width = int(cv_image.shape[1] * self.img_max_height / cv_image.shape[0])
@@ -63,6 +63,6 @@ class SimpleGuiClass(Node):
         self.visualization_canvases[vision_system].conversion_factor = 400 / height_in_meters
         self.visualization_canvases[vision_system].width = width'''
 
-    def fanuc_trays_cb_(self, msg: Trays):
+    def motoman_trays_cb_(self, msg: Trays):
         all_trays = msg.kit_trays + msg.part_trays
-        self.fanuc_canvas.all_trays = all_trays
+        self.motoman_canvas.all_trays = all_trays

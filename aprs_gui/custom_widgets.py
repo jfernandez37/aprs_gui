@@ -15,7 +15,7 @@ import yaml
 from functools import partial
 
 from aprs_interfaces.msg import Tray, SlotInfo
-from aprs_interfaces.srv import LocateTrays, Pick, Place, MoveToNamedPose
+from aprs_interfaces.srv import LocateTrays, Pick, Place, MoveToNamedPose, PneumaticGripperControl
 
 from geometry_msgs.msg import Transform
 
@@ -336,6 +336,12 @@ class ServicesFrame(ctk.CTkFrame):
         self.service_notebook.add(self.place_frame, text="Place")
         self.add_place_widgets_to_frame()
 
+        # self.gripper_frame = ctk.CTkFrame(self.service_notebook, width = 700, height=900, fg_color="#EBEBEB")
+        # self.gripper_frame.pack(fill='both', expand=True)
+        # self.gripper_frame.pack_propagate(0)
+        # self.service_notebook.add(self.gripper_frame, text="Actuate_gripper")
+        # self.add_gripper_widgets_to_frame()
+
         self.service_notebook.grid(column=0, row=0, padx=20)
 
         self.robot_selection_frame.grid(column=1, row=0, padx=20)
@@ -454,6 +460,28 @@ class ServicesFrame(ctk.CTkFrame):
             if time()-start >= 15.0:
                 self.node.get_logger().warn(f"Unable to place frame {self.place_frame_selection} with {self.selected_robot.get()}")
                 return
+            
+    # ==============================================================
+    #                            Place
+    # ==============================================================
+    
+    # def add_gripper_widgets_to_frame(self):
+
+    #     ctk.CTkButton(self.gripper_frame, text="Open gripper", command=partial(self.acuate_gripper_service, False)).pack(pady=25)
+    #     ctk.CTkButton(self.gripper_frame, text="Open gripper", command=partial(self.acuate_gripper_service, True)).pack(pady=25)
+    
+    # def acuate_gripper_service(self, enable: bool):
+    #     gripper_request = PneumaticGripperControl.Request()
+    #     gripper_request.enable = enable
+
+    #     future = self.service_clients[self.selected_robot.get()]["place_in_slot"].call_async(place_request)
+
+    #     start = time()
+    #     while not future.done():
+    #         pass
+    #         if time()-start >= 15.0:
+    #             self.node.get_logger().warn(f"Unable to place frame {self.place_frame_selection} with {self.selected_robot.get()}")
+    #             return
 
     def get_named_positions(self, robot_name: str):
         moveit_package = get_package_share_directory(f'{robot_name}_moveit_config')
@@ -481,7 +509,7 @@ class ServicesFrame(ctk.CTkFrame):
         selection = frame_var.get()
 
         if selection in frames:
-            frame_menu.configure(values = frames)
+            frame_menu.configure(values = list(set(frames)))
         else:
             options = []
             for topic in frames:
