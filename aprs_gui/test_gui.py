@@ -4,6 +4,8 @@ from tkinter import ttk
 import tkinter as tk
 
 from PIL import Image
+import os
+import cv2
 from time import time
 from math import pi
 from functools import partial
@@ -11,9 +13,11 @@ from sensor_msgs.msg import Image as ImageMsg, JointState
 from rclpy.qos import qos_profile_default
 from cv_bridge import CvBridge
 from typing import Optional
+from ament_index_python.packages import get_package_share_directory
 
 from aprs_interfaces.msg import Trays, Tray
 from aprs_interfaces.srv import LocateTrays
+from aprs_vision.stream_handler import StreamHandler
 
 from aprs_gui.custom_widgets import LiveImage, TrayCanvas, RobotStatusFrame, ServicesFrame
 
@@ -22,10 +26,15 @@ def deg_to_rad(deg: float):
 
 class GuiClass(Node):
     vision_systems_ = ["fanuc_vision", "motoman_vision", "teach_table_vision", "fanuc_conveyor", "motoman_conveyor"]
-    service_headers_ = ["/fanuc/table_trays_info", "/motoman/table_trays_info", "/teach/table_trays_info", "/fanuc/conveyor_trays_info", "/motoman/conveyor_trays_info"]
+    tray_service_topics_ = ["/fanuc/table_trays_info", "/motoman/table_trays_info", "/teach/table_trays_info", "/fanuc/conveyor_trays_info", "/motoman/conveyor_trays_info"]
     robots_ = ["fanuc", "motoman"]
-    service_types_ = ["move_to_named_pose", "pick_from_slot", "place_in_slot"]
+    tray_topics_ = ["move_to_named_pose", "pick_from_slot", "place_in_slot"]
     locate_trays_services_ = ["/fanuc/locate_trays_on_table", "/motoman/locate_trays_on_table", "/teach/locate_trays_on_table","/fanuc/locate_trays_on_conveyor","/motoman/locate_trays_on_conveyor"]
+    vision_video_streams_ = {"fanuc_vision": "http://192.168.1.104/mjpg/video.mjpg",
+                            "fanuc_conveyor": "http://192.168.1.108/mjpg/video.mjpg",
+                            "motoman_vision": "http://192.168.1.110/mjpg/video.mjpg",
+                            "motoman_conveyor": "http://192.168.1.107/mjpg/video.mjpg",
+                            "teach_table_vision": "http://192.168.1.104/mjpg/video.mjpg"}
     def __init__(self):
         super().__init__("test_gui")
         
@@ -40,21 +49,25 @@ class GuiClass(Node):
 
         self.bridge = CvBridge()
         
+        # Stream handlers
+        share_path = get_package_share_directory('aprs_vision')
+        calibration_filepaths = {"fanuc_vision": os.path.join(share_path, 'config', 'fanuc_table_calibration.npz'),
+                                 "motoman_vision" : os.path.join(share_path, 'config', 'motoman_table_calibration.npz'),
+                                 "fanuc_conveyor": os.path.join(share_path, 'config', 'fanuc_conveyor_calibration.npz'),
+                                 "motoman_conveyor": os.path.join(share_path, 'config', 'motoman_conveyor_calibration.npz'),
+                                 "teach_table_vision": os.path.join(share_path, 'config', 'fanuc_table_calibration.npz')}
+
+        self.stream_handlers = {vision_system: StreamHandler(GuiClass.vision_video_streams_[vision_system], calibration_filepaths[vision_system]) for vision_system in GuiClass.vision_systems_}
+        self.most_recent_imgs: dict[str: Optional[ctk.CTkImage]] = {vision_system: None for vision_system in GuiClass.vision_systems_}
+        
         # Subscribers and clients
-        self.image_subs = {}
         self.tray_subs = {}
         self.locate_clients = {}
-        for i in range(len(GuiClass.vision_systems_)):
-            self.image_subs[GuiClass.vision_systems_[i]] = self.create_subscription(
-                ImageMsg, 
-                f'{GuiClass.service_headers_[i]}/raw_image',
-                partial(self.image_cb, GuiClass.vision_systems_[i]),
-                qos_profile_default
-            )
 
+        for i in range(len(GuiClass.vision_systems_)):
             self.tray_subs[GuiClass.vision_systems_[i]] = self.create_subscription(
                 Trays,
-                GuiClass.service_headers_[i],
+                GuiClass.tray_service_topics_[i],
                 partial(self.trays_cb_, GuiClass.vision_systems_[i]),
                 qos_profile_default
             )
@@ -109,6 +122,26 @@ class GuiClass(Node):
         self.status_frames["motoman"] = RobotStatusFrame(self.main_wind, "motoman")
         self.status_frames["motoman"].grid(pady=10,column=3, row=2, sticky=tk.E+tk.W+tk.N+tk.S)
 
+        self.update_imgs()
+
+    def update_imgs(self):
+        for vision_system in GuiClass.vision_systems_:
+            cv_image = self.stream_handlers[vision_system].read_frame()
+            cv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
+            width = int(cv_image.shape[1] * self.img_max_height / cv_image.shape[0])
+            self.most_recent_imgs[vision_system] = ctk.CTkImage(Image.fromarray(cv_image), size=(width, self.img_max_height))
+            
+            if vision_system == self.vision_selection.get():
+                self.live_image_label.current_image = self.most_recent_imgs[vision_system]
+
+            height_in_inches = cv_image.shape[0] / 30
+            height_in_meters = height_in_inches * 0.0254
+            self.visualization_canvases[vision_system].global_conversion_factor = 400 / height_in_meters
+            self.visualization_canvases[vision_system].width = width
+        
+
+        self.main_wind.after(50, self.update_imgs)
+
     def add_visualization_widgets_to_frame(self):
         # Locate Trays widgets
         self.locate_trays_frame = ctk.CTkFrame(self.visualization_frame, 200, 800, fg_color="#EBEBEB")
@@ -133,7 +166,6 @@ class GuiClass(Node):
         self.vision_selection_menu = ctk.CTkOptionMenu(self.visualization_frame, variable=self.vision_selection, values=GuiClass.vision_systems_)
         self.vision_selection_menu.grid(column = 1, row = 1, pady = 1, sticky="ew")
 
-        self.most_recent_imgs: dict[str: Optional[ctk.CTkImage]] = {vision_system: None for vision_system in GuiClass.vision_systems_}
         self.center_visualization_frame = ctk.CTkFrame(self.visualization_frame, 600, 900, fg_color="#EBEBEB")
         self.live_image_label = LiveImage(self.center_visualization_frame)
         self.live_image_label.pack(pady=1, padx=20)
@@ -151,24 +183,10 @@ class GuiClass(Node):
         self.show_all_canvases(1,1,1)
         self.vision_selection.trace_add("write", self.show_all_canvases)
 
-    def image_cb(self, vision_system: str, msg: ImageMsg):
-        cv_image = self.bridge.imgmsg_to_cv2(msg, "rgb8")
-        width = int(cv_image.shape[1] * self.img_max_height / cv_image.shape[0])
-        
-        self.most_recent_imgs[vision_system] = ctk.CTkImage(Image.fromarray(cv_image), size=(width, self.img_max_height))
-        if vision_system == self.vision_selection.get():
-            self.live_image_label.current_image = self.live_image_label[vision_system]
-
-        height_in_inches = cv_image.shape[0] / 30
-        height_in_meters = height_in_inches * 0.0254
-        self.visualization_canvases[vision_system].conversion_factor = 400 / height_in_meters
-        self.visualization_canvases[vision_system].width = width
-
     def trays_cb_(self, vision_system: str, msg: Trays):
         all_trays: list[Tray] = msg.kit_trays + msg.part_trays
         self.visualization_canvases[vision_system].trays_info_recieved = True
         self.visualization_canvases[vision_system].all_trays = all_trays
-        self.visualization_canvases[vision_system].update_canvas()
 
         for robot in GuiClass.robots_:
             if robot in vision_system:

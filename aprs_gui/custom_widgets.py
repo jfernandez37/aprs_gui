@@ -78,34 +78,6 @@ class TrayCanvas(tk.Canvas):
                    SlotInfo.MEDIUM: 0.04,
                    SlotInfo.LARGE: 0.05}
     
-    # gear_offsets_ = {Tray.SMALL_GEAR_TRAY: {
-    #                     'slot_1': (-0.045, 0.045),
-    #                     'slot_2': (0.045, 0.045),
-    #                     'slot_3': (-0.045, -0.045),
-    #                     'slot_4': (0.045, -0.045),
-    #                 },
-    #                 Tray.MEDIUM_GEAR_TRAY: {
-    #                     'slot_1': (-0.050, 0.050),
-    #                     'slot_2': (0.050, 0.050),
-    #                     'slot_3': (-0.050, -0.050),
-    #                     'slot_4': (0.050, -0.050),
-    #                 },
-    #                 Tray.LARGE_GEAR_TRAY: {
-    #                     'slot_1': (-0.052, -0.06),
-    #                     'slot_2': (0.052, -0.06),
-    #                 },
-    #                 Tray.M2L1_KIT_TRAY: {
-    #                     'lg_1': (0.0, -0.075),
-    #                     'mg_1': (-0.065, 0.0),
-    #                     'mg_2': (0.065, 0.0),
-    #                 },
-    #                 Tray.S2L2_KIT_TRAY: {
-    #                     'lg_1': (-0.052, -0.060),
-    #                     'lg_2': (0.052, -0.060),
-    #                     'sg_1': (-0.045, 0.045),
-    #                     'sg_2': (0.045, 0.045),
-    #                 }}
-    
     tray_colors_ = {
         Tray.SMALL_GEAR_TRAY: "#3b3a3a",
         Tray.MEDIUM_GEAR_TRAY: "#3b3a3a",
@@ -122,20 +94,23 @@ class TrayCanvas(tk.Canvas):
         self.all_trays: Optional[list[Tray]] = None
         self.width: Optional[int] = None
         self.side_canvas = False
+        self.global_conversion_factor = None
         self.update_canvas()
     
     def update_canvas(self):
         self.delete("all")
-        # if self.side_canvas:
-        #     try:
-        #         self.configure(height=150, width=self.width * 3 / 8)
-        #     except:
-        #         self.configure(height=150, width=150)
-        # else:
-        self.configure(height=400, width=self.width)
-        if self.conversion_factor is not None and self.all_trays is not None:
-            # if self.side_canvas:
-            #     self.conversion_factor = self.global_conversion_factor * 3 / 8
+        if self.side_canvas:
+            try:
+                self.configure(height=150, width=self.width * 3 / 8)
+            except:
+                self.configure(height=150, width=150)
+        else:
+            self.configure(height=400, width=self.width)
+        if self.global_conversion_factor is not None and self.all_trays is not None:
+            if self.side_canvas:
+                self.conversion_factor = self.global_conversion_factor * 3 / 8
+            else:
+                self.conversion_factor = copy(self.global_conversion_factor)
             for tray in self.all_trays:
                 self.draw_tray(tray)
         self.after(500, self.update_canvas)
@@ -303,7 +278,8 @@ class ServicesFrame(ctk.CTkFrame):
 
         self.service_clients = {robot: {"move_to_named_pose": self.node.create_client(MoveToNamedPose, f"/{robot}/move_to_named_pose"),
                               "pick_from_slot": self.node.create_client(Pick, f"/{robot}/pick_from_slot"),
-                              "place_in_slot": self.node.create_client(Place, f"/{robot}/place_in_slot")}
+                              "place_in_slot": self.node.create_client(Place, f"/{robot}/place_in_slot"),
+                              "actuate_gripper": self.node.create_client(PneumaticGripperControl, f"/{robot}/actuate_gripper")}
                               for robot in ServicesFrame.robots_}
 
         self.robot_selection_frame = ctk.CTkFrame(self, width = 300, height=900, fg_color="#EBEBEB")
@@ -336,11 +312,11 @@ class ServicesFrame(ctk.CTkFrame):
         self.service_notebook.add(self.place_frame, text="Place")
         self.add_place_widgets_to_frame()
 
-        # self.gripper_frame = ctk.CTkFrame(self.service_notebook, width = 700, height=900, fg_color="#EBEBEB")
-        # self.gripper_frame.pack(fill='both', expand=True)
-        # self.gripper_frame.pack_propagate(0)
-        # self.service_notebook.add(self.gripper_frame, text="Actuate_gripper")
-        # self.add_gripper_widgets_to_frame()
+        self.gripper_frame = ctk.CTkFrame(self.service_notebook, width = 700, height=900, fg_color="#EBEBEB")
+        self.gripper_frame.pack(fill='both', expand=True)
+        self.gripper_frame.pack_propagate(0)
+        self.service_notebook.add(self.gripper_frame, text="Actuate_gripper")
+        self.add_gripper_widgets_to_frame()
 
         self.service_notebook.grid(column=0, row=0, padx=20)
 
@@ -395,7 +371,7 @@ class ServicesFrame(ctk.CTkFrame):
         start = time()
         while not future.done():
             pass
-            if time()-start >= 15.0:
+            if time()-start >= 5.0:
                 self.node.get_logger().warn(f"Unable to move {self.selected_robot.get()} to desired pose")
                 return
     
@@ -426,7 +402,7 @@ class ServicesFrame(ctk.CTkFrame):
         start = time()
         while not future.done():
             pass
-            if time()-start >= 15.0:
+            if time()-start >= 5.0:
                 self.node.get_logger().warn(f"Unable to pick frame {self.pick_frame_selection} with {self.selected_robot.get()}")
                 return
     
@@ -457,31 +433,31 @@ class ServicesFrame(ctk.CTkFrame):
         start = time()
         while not future.done():
             pass
-            if time()-start >= 15.0:
+            if time()-start >= 5.0:
                 self.node.get_logger().warn(f"Unable to place frame {self.place_frame_selection} with {self.selected_robot.get()}")
                 return
             
     # ==============================================================
-    #                            Place
+    #                          Gripper
     # ==============================================================
     
-    # def add_gripper_widgets_to_frame(self):
+    def add_gripper_widgets_to_frame(self):
 
-    #     ctk.CTkButton(self.gripper_frame, text="Open gripper", command=partial(self.acuate_gripper_service, False)).pack(pady=25)
-    #     ctk.CTkButton(self.gripper_frame, text="Open gripper", command=partial(self.acuate_gripper_service, True)).pack(pady=25)
+        ctk.CTkButton(self.gripper_frame, text="Open gripper", command=partial(self.acuate_gripper_service, False)).pack(pady=25)
+        ctk.CTkButton(self.gripper_frame, text="Close gripper", command=partial(self.acuate_gripper_service, True)).pack(pady=25)
     
-    # def acuate_gripper_service(self, enable: bool):
-    #     gripper_request = PneumaticGripperControl.Request()
-    #     gripper_request.enable = enable
+    def acuate_gripper_service(self, enable: bool):
+        gripper_request = PneumaticGripperControl.Request()
+        gripper_request.enable = enable
 
-    #     future = self.service_clients[self.selected_robot.get()]["place_in_slot"].call_async(place_request)
+        future = self.service_clients[self.selected_robot.get()]["actuate_gripper"].call_async(gripper_request)
 
-    #     start = time()
-    #     while not future.done():
-    #         pass
-    #         if time()-start >= 15.0:
-    #             self.node.get_logger().warn(f"Unable to place frame {self.place_frame_selection} with {self.selected_robot.get()}")
-    #             return
+        start = time()
+        while not future.done():
+            pass
+            if time()-start >= 5.0:
+                self.node.get_logger().warn(f"Unable to {'close' if enable else 'open'} {self.selected_robot.get()} gripper")
+                return
 
     def get_named_positions(self, robot_name: str):
         moveit_package = get_package_share_directory(f'{robot_name}_moveit_config')
