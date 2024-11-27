@@ -97,11 +97,11 @@ class TrayCanvas(tk.Canvas):
         self.global_conversion_factor = None
         self.update_canvas()
     
-    def update_canvas(self):
+    def update_canvas(self, once = False):
         self.delete("all")
         if self.side_canvas:
             try:
-                self.configure(height=150, width=self.width * 3 / 8)
+                self.configure(height=150, width=int(self.width * 3 / 8))
             except:
                 self.configure(height=150, width=150)
         else:
@@ -113,7 +113,8 @@ class TrayCanvas(tk.Canvas):
                 self.conversion_factor = copy(self.global_conversion_factor)
             for tray in self.all_trays:
                 self.draw_tray(tray)
-        self.after(500, self.update_canvas)
+        if not once:
+            self.after(500, self.update_canvas)
     
     def round_shape(self, points: list[float], radius: float = 0.03):
         rounded_points = []

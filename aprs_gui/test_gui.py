@@ -173,6 +173,7 @@ class GuiClass(Node):
 
         # Subcanvas frame
         self.subcanvas_frame = ctk.CTkFrame(self.visualization_frame, 400, 900, fg_color="#EBEBEB")
+        self.subcanvas_frame.pack_propagate(0)
         self.subcanvas_frame.grid(column = 2, row = 2, rowspan=8, padx=20)
 
         self.visualization_canvases = {vision_system: TrayCanvas(self.main_wind) for vision_system in GuiClass.vision_systems_}
@@ -244,7 +245,7 @@ class GuiClass(Node):
         self.visualization_labels.clear()
         
         self.visualization_canvases[self.vision_selection.get()].side_canvas = False
-        self.visualization_canvases[self.vision_selection.get()].update_canvas()
+        self.visualization_canvases[self.vision_selection.get()].update_canvas(True)
         self.visualization_canvases[self.vision_selection.get()].pack(in_=self.center_visualization_frame, pady=20, padx=20)
         self.visualization_labels.append(ctk.CTkLabel(self.center_visualization_frame, text=self.vision_selection.get()))
         self.visualization_labels[-1].pack(pady=5, padx=20)
@@ -253,7 +254,7 @@ class GuiClass(Node):
         for vision_system in GuiClass.vision_systems_:
             if vision_system != self.vision_selection.get():
                 self.visualization_canvases[vision_system].side_canvas = True
-                self.visualization_canvases[vision_system].update_canvas()
+                self.visualization_canvases[vision_system].update_canvas(True)
                 self.visualization_canvases[vision_system].grid(in_=self.subcanvas_frame, column = 0, row = current_row, pady=5, padx=20, sticky="ew")
                 current_row += 1
                 self.visualization_labels.append(ctk.CTkLabel(self.subcanvas_frame, text=vision_system))
