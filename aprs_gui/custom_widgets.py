@@ -9,13 +9,20 @@ from math import sin, cos, atan2, pi
 from time import time
 from ament_index_python.packages import get_package_share_directory
 import re
+from rclpy import spin_once
 from rclpy.node import Node
+from rclpy.action import ActionClient
+from rclpy.task import Future
 from difflib import SequenceMatcher
 import yaml
 from functools import partial
+from time import sleep
+
+from aprs_gui.canvas_tooltips import CanvasTooltip
 
 from aprs_interfaces.msg import Tray, SlotInfo
-from aprs_interfaces.srv import LocateTrays, Pick, Place, MoveToNamedPose, PneumaticGripperControl
+from aprs_interfaces.srv import LocateTrays, Pick, Place, MoveToNamedPose, PneumaticGripperControl, GenerateInitState, GeneratePlan
+from aprs_interfaces.action import ExecutePlan
 
 from geometry_msgs.msg import Transform
 
@@ -161,11 +168,13 @@ class TrayCanvas(tk.Canvas):
         
         points = self.generate_tray_points((tray_x, tray_y), tray.identifier, tray_rotation)
         canvas_points = self.get_canvas_points(points)
-        self.create_polygon(canvas_points, fill=TrayCanvas.tray_colors_[tray.identifier], smooth=True, outline="black", splinesteps=100)
+        tray_polygon = self.create_polygon(canvas_points, fill=TrayCanvas.tray_colors_[tray.identifier], smooth=True, outline="black", splinesteps=100)
+        tooltip = CanvasTooltip(self, tray_polygon, text=tray.name)
 
         fiducial_points = self.generate_tray_points((tray_x, tray_y), -1, tray_rotation, False)
         canvas_points = self.get_canvas_points(fiducial_points)
-        self.create_polygon(canvas_points, fill="white", smooth=False, outline="black", splinesteps=100)
+        fiducial_polygon = self.create_polygon(canvas_points, fill="white", smooth=False, outline="black", splinesteps=100)
+        tooltip = CanvasTooltip(self, fiducial_polygon, text=str(tray.name))
         
         for slot in tray.slots:
             slot: SlotInfo
@@ -186,10 +195,12 @@ class TrayCanvas(tk.Canvas):
             canvas_x = translated_x * self.conversion_factor
             canvas_y = translated_y * self.conversion_factor
 
-            self.draw_circle(canvas_x, canvas_y, TrayCanvas.gear_radii_[slot.size] * self.conversion_factor)
+            self.draw_gear(canvas_x, canvas_y, TrayCanvas.gear_radii_[slot.size] * self.conversion_factor, slot.name)
+
     
-    def draw_circle(self, c_x, c_y, radius):
-        self.create_oval(c_x - radius, c_y - radius, c_x + radius, c_y + radius, fill="#40bd42")
+    def draw_gear(self, c_x, c_y, radius, slot_name):
+        gear_drawing = self.create_oval(c_x - radius, c_y - radius, c_x + radius, c_y + radius, fill="#40bd42")
+        tooltip = CanvasTooltip(self, gear_drawing, text=slot_name)
 
     def get_tray_angle(self, q):
         R = PyKDL.Rotation.Quaternion(q.x, q.y, q.z, q.w)
@@ -323,6 +334,10 @@ class ServicesFrame(ctk.CTkFrame):
 
         self.robot_selection_frame.grid(column=1, row=0, padx=20)
 
+        self.held_gear: Optional[str] = None
+
+        self.available_matching_slots: list[str] = []
+
     def add_robot_selection_widgets(self):
         ctk.CTkLabel(self.robot_selection_frame, text="Select the robot for the service:").pack(pady=25)
 
@@ -383,6 +398,8 @@ class ServicesFrame(ctk.CTkFrame):
     def add_pick_widgets_to_frame(self):
         if len(self.occupied_slots[self.selected_robot.get()]) == 0:
             ctk.CTkLabel(self.pick_frame, text="No occupied slots found for " + self.selected_robot.get()).pack(pady=10)
+        elif self.held_gear is not None:
+            ctk.CTkLabel(self.pick_frame, text= self.selected_robot.get() + " is currently holding a gear. Please place it to pick another.").pack(pady=10)
         else:
             self.pick_frame_selection.set("")
             ctk.CTkLabel(self.pick_frame, text="Select the frame for picking:").pack(pady=10)
@@ -404,8 +421,19 @@ class ServicesFrame(ctk.CTkFrame):
         while not future.done():
             pass
             if time()-start >= 5.0:
-                self.node.get_logger().warn(f"Unable to pick frame {self.pick_frame_selection} with {self.selected_robot.get()}")
+                self.node.get_logger().warn(f"Unable to pick frame {self.pick_frame_selection.get()} with {self.selected_robot.get()}")
                 return
+
+        self.occupied_slots[self.selected_robot.get()].remove(self.pick_frame_selection.get())
+        self.unoccupied_slots[self.selected_robot.get()].append(self.pick_frame_selection.get())
+
+        if "small" in self.pick_frame_selection or "sg" in self.pick_frame_selection:
+            self.held_gear = ["small", "sg"]
+        elif "medium" in self.pick_frame_selection or "mg" in self.pick_frame_selection:
+            self.held_gear = ["medium", "mg"]
+        else:
+            self.held_gear = ["large", "lg"]
+        self.reload_pick_and_place()
     
     # ==============================================================
     #                            Place
@@ -414,16 +442,23 @@ class ServicesFrame(ctk.CTkFrame):
     def add_place_widgets_to_frame(self):
         if len(self.unoccupied_slots[self.selected_robot.get()]) == 0:
             ctk.CTkLabel(self.place_frame, text="No unoccupied slots found for " + self.selected_robot.get()).pack(pady=10)
+        elif self.held_gear is None:
+            ctk.CTkLabel(self.place_frame, text="A gear must be picked by " + self.selected_robot.get() + " to place. Please pick a gear").pack(pady=10)
         else:
+            self.available_matching_slots = []
+            for slot in self.unoccupied_slots[self.selected_robot()]:
+                for i in self.held_gear:
+                    if i in slot:
+                        self.available_matching_slots.append(i)
             self.place_frame_selection.set("")
             ctk.CTkLabel(self.place_frame, text="Select the frame for placing:").pack(pady=10)
 
-            self.place_frame_menu = ctk.CTkComboBox(self.place_frame, variable=self.place_frame_selection, values=self.unoccupied_slots[self.selected_robot.get()])
+            self.place_frame_menu = ctk.CTkComboBox(self.place_frame, variable=self.place_frame_selection, values=self.available_matching_slots)
             self.place_frame_menu.pack(pady=10)
 
             ctk.CTkButton(self.place_frame, text="Call Service", command=self.call_place_service).pack(pady=10)
 
-            self.place_frame_selection.trace_add('write', partial(self.only_show_matching_frames, self.place_frame_selection, self.place_frame_menu, self.unoccupied_slots[self.selected_robot.get()]))
+            self.place_frame_selection.trace_add('write', partial(self.only_show_matching_frames, self.place_frame_selection, self.place_frame_menu, self.available_matching_slots))
 
     def call_place_service(self):
         place_request = Place.Request()
@@ -435,8 +470,11 @@ class ServicesFrame(ctk.CTkFrame):
         while not future.done():
             pass
             if time()-start >= 5.0:
-                self.node.get_logger().warn(f"Unable to place frame {self.place_frame_selection} with {self.selected_robot.get()}")
+                self.node.get_logger().warn(f"Unable to place frame {self.place_frame_selection.get()} with {self.selected_robot.get()}")
                 return
+        
+        self.occupied_slots[self.selected_robot.get()].append(self.place_frame_selection.get())
+        self.unoccupied_slots[self.selected_robot.get()].remove(self.place_frame_selection.get())
             
     # ==============================================================
     #                          Gripper
@@ -497,3 +535,80 @@ class ServicesFrame(ctk.CTkFrame):
                         if SequenceMatcher(None, selection.lower(), topic[i:i+len(selection)].lower()).ratio() > 0.8:
                             options.append(topic)
             frame_menu.configure(values = list(set(options)))
+
+class PDDLFrame(ctk.CTkFrame):
+    def __init__(self, frame, node: Node):
+        super().__init__(frame, width = 1200, height=950, fg_color="#EBEBEB")
+
+        self.node = node
+        self.service_clients = {"generate_init_state": self.node.create_client(GenerateInitState, f"/generate_pddl_init_state"),
+                                "generate_plan": self.node.create_client(GeneratePlan, f"/generate_pddl_plan")}
+        
+        self.execute_plan_client = ActionClient(self.node, ExecutePlan, "/execute_pddl_plan")
+
+        self.generate_init_state_button = ctk.CTkButton(self, text="Generate Init State", command=self.call_generate_init_state_service_)
+        self.generate_init_state_button.pack()
+
+        self.generate_plan_button = ctk.CTkButton(self, text="Generate Plan", command=self.call_generate_plan_service, state=tk.DISABLED)
+        self.generate_plan_button.pack()
+
+        self.plan_scrollable_frame = ctk.CTkScrollableFrame(self, width=900, height=450)
+        self.plan_scrollable_frame.pack()
+        self.scrollable_label = ctk.CTkLabel(self.plan_scrollable_frame, text="")
+        self.scrollable_label.pack()
+
+        self.execute_plan_button = ctk.CTkButton(self, text="Execute Plan", command=self.call_execute_plan_action, state=tk.DISABLED)
+        self.execute_plan_button.pack()
+    
+    def call_generate_init_state_service_(self):
+        generate_init_state_request = GenerateInitState.Request()
+
+        future = self.service_clients["generate_init_state"].call_async(generate_init_state_request)
+
+        start = time()
+        while not future.done():
+            pass
+            if time()-start >= 5.0:
+                self.node.get_logger().warn(f"Unable to generate init state (timeout)")
+                return
+        
+        self.generate_init_state_button.configure(state=tk.DISABLED)
+        self.generate_plan_button.configure(state=tk.NORMAL)
+
+    def call_generate_plan_service(self):
+        generate_plan_request = GeneratePlan.Request()
+
+        future = self.service_clients["generate_plan"].call_async(generate_plan_request)
+
+        start = time()
+        while not future.done():
+            pass
+            if time()-start >= 5.0:
+                self.node.get_logger().warn(f"Unable to generate plan (timeout)")
+                return
+        if future.result().success:
+            self.generate_plan_button.configure(state=tk.DISABLED)
+            self.scrollable_label.configure(text=future.result().plan)
+            self.execute_plan_button.configure(state=tk.NORMAL)
+        else:
+            self.node.get_logger().warn(f"Unable to generate plan (service request=False)")
+            return
+    
+    def call_execute_plan_action(self):
+        self.execute_plan_client.wait_for_server()
+        self.node.get_logger().info("Executing plan")
+
+        goal = ExecutePlan.Goal()
+
+        try:
+            future = self.execute_plan_client.send_goal_async(goal)
+            
+            while not self.node.goal_finished:
+                spin_once(self.node)
+                sleep(0.1)
+            
+            self.execute_plan_button.configure(state=tk.DISABLED)
+            self.scrollable_label.configure(text="")
+            self.generate_init_state_button.configure(state=tk.NORMAL)
+        except:
+            self.node.get_logger().info("Could not execute plan")

@@ -19,7 +19,7 @@ from aprs_interfaces.msg import Trays, Tray
 from aprs_interfaces.srv import LocateTrays
 from aprs_vision.stream_handler import StreamHandler
 
-from aprs_gui.custom_widgets import LiveImage, TrayCanvas, RobotStatusFrame, ServicesFrame
+from aprs_gui.custom_widgets import LiveImage, TrayCanvas, RobotStatusFrame, ServicesFrame, PDDLFrame
 
 def deg_to_rad(deg: float):
         return deg * pi / 180
@@ -106,12 +106,9 @@ class GuiClass(Node):
         self.services_frame.pack(fill='both', expand=True)
         self.notebook.add(self.services_frame, text="Services")
 
-        self.pddl_frame = ctk.CTkFrame(self.notebook, width = 1200, height=950, fg_color="#EBEBEB")
+        self.pddl_frame = PDDLFrame(self.notebook, self)
         self.pddl_frame.pack(fill='both', expand=True)
-        self.pddl_frame.grid_rowconfigure([i for i in range(8)], weight=1)
-        self.pddl_frame.grid_columnconfigure((0,1,2), weight=1)
         self.notebook.add(self.pddl_frame, text="PDDL")
-        # self.add_pddl_widgets_to_frame()
 
         self.notebook.grid(pady=10,column=2, row=2, sticky=tk.E+tk.W+tk.N+tk.S)
 
