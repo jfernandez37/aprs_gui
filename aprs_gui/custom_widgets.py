@@ -569,7 +569,7 @@ class PDDLFrame(ctk.CTkFrame):
                 return
         if future.result().success:
             self.generate_plan_button.configure(state=tk.DISABLED)
-            self.scrollable_label.configure(text=future.result().plan)
+            self.scrollable_label.configure(text="\n".join([item.action for item in future.result().plan.items]))
             self.execute_plan_button.configure(state=tk.NORMAL)
         else:
             self.node.get_logger().warn(f"Unable to generate plan (service request=False)")
