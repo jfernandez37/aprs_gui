@@ -52,7 +52,12 @@ class GuiClass(Node):
                                  "motoman_conveyor": os.path.join(share_path, 'config', 'motoman_conveyor_calibration.npz'),
                                  "teach_table_vision": os.path.join(share_path, 'config', 'teach_table_calibration.npz')}
 
-        self.stream_handlers = {vision_system: StreamHandler(GuiClass.vision_video_streams_[vision_system], calibration_filepaths[vision_system]) for vision_system in GuiClass.vision_systems_}
+        self.stream_handlers: dict[str, Optional[StreamHandler]] = {}
+        for vision_system in GuiClass.vision_systems_:
+            try:
+                self.stream_handlers[vision_system] = StreamHandler(GuiClass.vision_video_streams_[vision_system], calibration_filepaths[vision_system])
+            except:
+                self.stream_handlers[vision_system] = None
         self.most_recent_imgs: dict[str: Optional[ctk.CTkImage]] = {vision_system: None for vision_system in GuiClass.vision_systems_}
         
         # Subscribers and clients
@@ -118,20 +123,22 @@ class GuiClass(Node):
 
     def update_imgs(self):
         for vision_system in GuiClass.vision_systems_:
-            cv_image = self.stream_handlers[vision_system].read_frame()
-            cv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
-            width = int(cv_image.shape[1] * self.img_max_height / cv_image.shape[0])
-            self.most_recent_imgs[vision_system] = ctk.CTkImage(Image.fromarray(cv_image), size=(width, self.img_max_height))
-            
-            if vision_system == self.vision_selection.get():
-                self.live_image_label.current_image = self.most_recent_imgs[vision_system]
+            if self.stream_handlers[vision_system] is not None:
+                cv_image = self.stream_handlers[vision_system].read_frame()
+                cv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
+                width = int(cv_image.shape[1] * self.img_max_height / cv_image.shape[0])
+                self.most_recent_imgs[vision_system] = ctk.CTkImage(Image.fromarray(cv_image), size=(width, self.img_max_height))
+                
+                if vision_system == self.vision_selection.get():
+                    self.live_image_label.current_image = self.most_recent_imgs[vision_system]
 
-            height_in_inches = cv_image.shape[0] / 30
-            height_in_meters = height_in_inches * 0.0254
-            self.visualization_canvases[vision_system].global_conversion_factor = 400 / height_in_meters
-            self.visualization_canvases[vision_system].width = width
+                height_in_inches = cv_image.shape[0] / 30
+                height_in_meters = height_in_inches * 0.0254
+                self.visualization_canvases[vision_system].global_conversion_factor = 400 / height_in_meters
+                self.visualization_canvases[vision_system].width = width
+            else:
+                self.live_image_label.configure(text=f"Unable to connect to {vision_system} camera")
         
-
         self.main_wind.after(50, self.update_imgs)
 
     def add_visualization_widgets_to_frame(self):
