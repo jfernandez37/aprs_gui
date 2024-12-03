@@ -57,7 +57,6 @@ class CanvasTooltip: # https://stackoverflow.com/questions/40538204/how-i-can-ma
             self.canvas.after_cancel(id_)
 
     def show(self, event=None):
-        print("TEST")
         def tip_pos_calculator(canvas, label,
                                *,
                                tip_delta=(10, 5), pad=(5, 3, 5, 3)):
@@ -133,6 +132,8 @@ class CanvasTooltip: # https://stackoverflow.com/questions/40538204/how-i-can-ma
         x, y = tip_pos_calculator(canvas, label)
 
         self.tw.wm_geometry("+%d+%d" % (x, y))
+
+        self.canvas.after(self.waittime + 200, self.hide)
 
     def hide(self):
         if self.tw:
