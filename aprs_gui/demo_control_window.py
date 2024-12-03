@@ -1,791 +1,260 @@
 import customtkinter as ctk
 from rclpy.node import Node
-from tkinter import ttk, END
+from tkinter import ttk
 import tkinter as tk
+
 from PIL import Image
+import os
+import cv2
+from time import time
+from math import pi
+from functools import partial
 from sensor_msgs.msg import Image as ImageMsg, JointState
 from rclpy.qos import qos_profile_default
 from cv_bridge import CvBridge
-from time import time, localtime, strftime
-from example_interfaces.srv import Trigger
-from aprs_interfaces.msg import SlotPixel, PixelCenter, PixelSlotInfo
-from math import sin, cos, pi
-from copy import copy
+from typing import Optional
 from ament_index_python.packages import get_package_share_directory
-from tf2_ros.buffer import Buffer
-from tf2_ros.transform_listener import TransformListener
-from tf2_ros.static_transform_broadcaster import StaticTransformBroadcaster
-import yaml
-from difflib import SequenceMatcher
-from aprs_interfaces.srv import MoveToNamedPose, Pick, Place, LocateTrays
-from sensor_msgs.msg import JointState
 
-FRAMEWIDTH=1200
-FRAMEHEIGHT=750
-FAR_LEFT_COLUMN = 1
-LEFT_COLUMN=2
-MIDDLE_COLUMN = 3
-RIGHT_COLUMN = 4
-FAR_RIGHT_COLUMN = 5
+from aprs_interfaces.msg import Trays, Tray
+from aprs_interfaces.srv import LocateTrays
+from aprs_vision.stream_handler import StreamHandler
 
-GEAR_COLORS_AND_SIZES = {
-    1: ("yellow",5),
-    2: ("orange", 6),
-    3: ("green", 8)
-}
+from aprs_gui.custom_widgets import LiveImage, TrayCanvas, RobotStatusFrame, ServicesFrame, PDDLFrame
 
-GEAR_TRAY_COLORS_AND_SIZES = {
-    13: ("black", (26, 26)),
-    14: ("blue", (44, 44)),
-    15: ("red", (20, 44))
-}
 
-ROBOTS = ["fanuc", "motoman"]
-
-class DemoControlWindow(Node):
-    _service_types = ["move_to_named_pose", "pick_from_slot", "place_in_slot"]
-
+class GuiClass(Node):
+    vision_systems_ = ["fanuc_vision", "motoman_vision", "teach_table_vision", "fanuc_conveyor", "motoman_conveyor"]
+    tray_service_topics_ = ["/fanuc/table_trays_info", "/motoman/table_trays_info", "/teach/table_trays_info", "/fanuc/conveyor_trays_info", "/motoman/conveyor_trays_info"]
+    robots_ = ["fanuc", "motoman"]
+    tray_topics_ = ["move_to_named_pose", "pick_from_slot", "place_in_slot"]
+    locate_trays_services_ = ["/fanuc/locate_trays_on_table", "/motoman/locate_trays_on_table", "/teach/locate_trays_on_table","/fanuc/locate_trays_on_conveyor","/motoman/locate_trays_on_conveyor"]
+    vision_video_streams_ = {"fanuc_vision": "http://192.168.1.104/mjpg/video.mjpg",
+                            "fanuc_conveyor": "http://192.168.1.108/mjpg/video.mjpg",
+                            "motoman_vision": "http://192.168.1.110/mjpg/video.mjpg",
+                            "motoman_conveyor": "http://192.168.1.107/mjpg/video.mjpg",
+                            "teach_table_vision": "http://192.168.1.105/mjpg/video.mjpg"}
     def __init__(self):
-        super().__init__("aprs_demo_gui")
+        super().__init__("test_gui")
         
-        ctk.set_appearance_mode("light")  # Modes: system (default), light, dark
-        ctk.set_default_color_theme("blue")  # Themes: blue (default), dark-blue, green
-        
-        self.main_window = ctk.CTk()
-        
-        self.main_window.title("Demo Control")
+        self.main_wind = ctk.CTk()
+        ctk.set_appearance_mode("light")
+        self.main_wind.geometry("1500x1000")
+        self.main_wind.resizable(False, False)
 
-        self.main_window.grid_rowconfigure(0, weight=1)
-        self.main_window.grid_rowconfigure(100, weight=1)
-        self.main_window.grid_columnconfigure(0, weight=1)
-        self.main_window.grid_columnconfigure(6, weight=1)
+        self.img_max_height = 400
+        self.main_wind.grid_rowconfigure([i for i in range(5)], weight=1)
+        self.main_wind.grid_columnconfigure((1,2,3), weight=1)
+
+        self.bridge = CvBridge()
         
+        # Stream handlers
+        share_path = get_package_share_directory('aprs_vision')
+        calibration_filepaths = {"fanuc_vision": os.path.join(share_path, 'config', 'fanuc_table_calibration.npz'),
+                                 "motoman_vision" : os.path.join(share_path, 'config', 'motoman_table_calibration.npz'),
+                                 "fanuc_conveyor": os.path.join(share_path, 'config', 'fanuc_conveyor_calibration.npz'),
+                                 "motoman_conveyor": os.path.join(share_path, 'config', 'motoman_conveyor_calibration.npz'),
+                                 "teach_table_vision": os.path.join(share_path, 'config', 'teach_table_calibration.npz')}
+
+        self.stream_handlers = {vision_system: StreamHandler(GuiClass.vision_video_streams_[vision_system], calibration_filepaths[vision_system]) for vision_system in GuiClass.vision_systems_}
+        self.most_recent_imgs: dict[str: Optional[ctk.CTkImage]] = {vision_system: None for vision_system in GuiClass.vision_systems_}
+        
+        # Subscribers and clients
+        self.tray_subs = {}
+        self.locate_clients = {}
+
+        for i in range(len(GuiClass.vision_systems_)):
+            self.tray_subs[GuiClass.vision_systems_[i]] = self.create_subscription(
+                Trays,
+                GuiClass.tray_service_topics_[i],
+                partial(self.trays_cb_, GuiClass.vision_systems_[i]),
+                qos_profile_default
+            )
+
+            self.locate_clients[GuiClass.vision_systems_[i]] = self.create_client(
+                LocateTrays,
+                GuiClass.locate_trays_services_[i]
+            )
+
+        self.joint_states_subs = {}
+        for robot in GuiClass.robots_:
+                self.joint_states_subs[robot] = self.create_subscription(
+                JointState,
+                f"/{robot}/joint_states",
+                partial(self.joint_state_cb, robot),
+                10
+            )
+        
+        self.occupied_slots = {robot: [] for robot in GuiClass.robots_}
+        self.unoccupied_slots = {robot: [] for robot in GuiClass.robots_}
+
         s = ttk.Style()
         s.theme_use('clam')
         s.configure('TNotebook', font='Arial Bold')
-        
-        self.main_window.geometry("1450x950")
-        
-        # VISION VARIABLES
-        self.bridge = CvBridge()
-        self.fanuc_image_update_var = ctk.IntVar(value=1)
-        self.motoman_image_update_var = ctk.IntVar(value=1)
-        self.teach_image_update_var = ctk.IntVar(value=1)
-        self.most_recent_fanuc_vision_time = -100
-        self.most_recent_motoman_vision_time = -100
-        self.most_recent_teach_vision_time = -100
-        self.fanuc_image = None
-        self.motoman_image = None
-        self.teach_image = None
-        self.display_image_size = (375, 211)
-        self.fanuc_image_ratios = None
-        self.motoman_image_ratios = None
-        self.teach_table_image_ratios = None
 
-        # ROBOT CONNECTIONS
-        self.most_recent_joint_states_times = {robot: -100 for robot in ROBOTS}
-        self.most_recent_joint_states = {robot: None for robot in ROBOTS}
-        self.joint_states_recieved = {robot: False for robot in ROBOTS}
-        self.joint_states_updated = {robot: ctk.IntVar(value=1) for robot in ROBOTS}
+        self.notebook = ttk.Notebook(self.main_wind)
 
-        # GET_NAMED_POSITIONS
-        self.named_positions = {robot: self.get_named_positions(robot) for robot in ROBOTS}
+        self.visualization_frame = ctk.CTkFrame(self.notebook, width = 1200, height=950, fg_color="#EBEBEB")
+        self.visualization_frame.pack(fill='both', expand=True)
+        self.visualization_frame.grid_rowconfigure([i for i in range(8)], weight=1)
+        self.visualization_frame.grid_columnconfigure((0, 1, 2), weight=1)
+        self.notebook.add(self.visualization_frame, text="Visualization")
+        self.add_visualization_widgets_to_frame()
 
-        # TF
-        self.tf_buffer = Buffer()
-        self.tf_listener = TransformListener(self.tf_buffer, self)
+        self.services_frame = ServicesFrame(self.notebook, self)
+        self.services_frame.pack(fill='both', expand=True)
+        self.notebook.add(self.services_frame, text="Services")
 
-        self.tf_broadcaster = StaticTransformBroadcaster(self)
-        self.static_transforms = []
+        self.pddl_frame = PDDLFrame(self.notebook, self)
+        self.pddl_frame.pack(fill='both', expand=True)
+        self.notebook.add(self.pddl_frame, text="PDDL")
 
-        frames_dict = yaml.safe_load(self.tf_buffer.all_frames_as_yaml())
-        try:
-            self.frames_list = list(frames_dict.keys())
-        except:
-            self.frames_list = []
+        self.notebook.grid(pady=10,column=2, row=2, sticky=tk.E+tk.W+tk.N+tk.S)
 
-        # Service clients
-        self.service_clients = {robot: {"move_to_named_pose": self.create_client(MoveToNamedPose, f"/{robot}/move_to_named_pose"),
-                              "pick_from_slot": self.create_client(Pick, f"/{robot}/pick_from_slot"),
-                              "place_in_slot": self.create_client(Place, f"/{robot}/place_in_slot")}
-                              for robot in ROBOTS}
-        
-        self.notebook = ttk.Notebook(self.main_window)
-        
-        self.vision_frame = ctk.CTkFrame(self.notebook, width=FRAMEWIDTH, height=FRAMEHEIGHT)
-        self.vision_frame.pack(fill='both', expand=True)
-        self.notebook.add(self.vision_frame, text="Run Demo")
-        self.setup_vision_tab()
+        self.status_frames: dict[str, RobotStatusFrame] = {}
+        self.status_frames["fanuc"] = RobotStatusFrame(self.main_wind, "fanuc")
+        self.status_frames["fanuc"].grid(pady=10,column=1, row=2, sticky=tk.E+tk.W+tk.N+tk.S)
 
-        self.service_frame = ctk.CTkFrame(self.notebook, width=FRAMEWIDTH, height=FRAMEHEIGHT)
-        self.service_frame.pack(fill='both', expand=True)
-        self.notebook.add(self.service_frame, text="Call Service")
-        self.setup_services_tab()
+        self.status_frames["motoman"] = RobotStatusFrame(self.main_wind, "motoman")
+        self.status_frames["motoman"].grid(pady=10,column=3, row=2, sticky=tk.E+tk.W+tk.N+tk.S)
 
-        self.fanuc_frame = ctk.CTkFrame(self.notebook, width=FRAMEWIDTH, height=FRAMEHEIGHT)
-        self.fanuc_frame.pack(fill='both', expand=True)
-        self.notebook.add(self.fanuc_frame, text="Fanuc Info")
-        self.setup_fanuc_frame()
-        self.temp_fanuc_widgets = []
+        self.update_imgs()
 
-        self.motoman_frame = ctk.CTkFrame(self.notebook, width=FRAMEWIDTH, height=FRAMEHEIGHT)
-        self.motoman_frame.pack(fill='both', expand=True)
-        self.notebook.add(self.motoman_frame, text="Motoman Info")
-        self.setup_motoman_frame()
-        
-        self.notebook.grid(pady=10, column=LEFT_COLUMN, columnspan = 3, sticky=tk.E+tk.W+tk.N+tk.S)
-        
-        # ROS2 SUBSCRIBERS
-        self.fanuc_image_subscriber = self.create_subscription(
-            ImageMsg, 
-            '/fanuc/table_vision/raw_image',
-            self.fanuc_image_cb,
-            qos_profile_default)
-        
-        self.motoman_image_subscriber = self.create_subscription(
-            ImageMsg, 
-            '/motoman/table_vision/raw_image',
-            self.motoman_image_cb,
-            qos_profile_default)
-        
-        self.teach_table_image_subscriber = self.create_subscription(
-            ImageMsg, 
-            '/teach/table_vision/raw_image',
-            self.teach_table_image_cb,
-            qos_profile_default)
-        
-        self.fanuc_pixel_subscriber = self.create_subscription(
-            SlotPixel,
-            "/fanuc/table_vision/slot_pixel_centers",
-            self.update_fanuc_canvas,
-            qos_profile_default
-        )
-
-        self.motoman_pixel_subscriber = self.create_subscription(
-            SlotPixel,
-            "/motoman/table_vision/slot_pixel_centers",
-            self.update_motoman_canvas,
-            qos_profile_default
-        )
-
-        self.teach_table_pixel_subscriber = self.create_subscription(
-            SlotPixel,
-            "/teach_table/slot_pixel_centers",
-            self.update_teach_table_canvas,
-            qos_profile_default
-        )
-
-        self.fanuc_joint_states_subscriber = self.create_subscription(
-            JointState,
-            "/fanuc/joint_states",
-            self.fanuc_joint_state_cb,
-            10
-        )
-
-        self.motoman_joint_states_subscriber = self.create_subscription(
-            JointState,
-            "/motoman/joint_states",
-            self.motoman_joint_state_cb,
-            10
-        )
-        
-        # ROS2 SERVICE CLIENTS
-        self.locate_fanuc_trays_client = self.create_client(
-            LocateTrays,
-            "/fanuc/table_vision/locate_trays"
-        )
-        self.update_fanuc_slots_client = self.create_client(
-            Trigger,
-            "/fanuc/table_vision/update_slots"
-        )
-
-        self.locate_motoman_trays_client = self.create_client(
-            LocateTrays,
-            "/motoman/table_vision/locate_trays"
-        )
-        self.update_motoman_slots_client = self.create_client(
-            Trigger,
-            "/motoman/table_vision/update_slots"
-        )
-
-        self.locate_teach_table_trays_client = self.create_client(
-            LocateTrays,
-            "/teach/table_vision/locate_trays"
-        )
-        self.update_teach_table_slots_client = self.create_client(
-            Trigger,
-            "/teach/table_vision/update_slots"
-        )
-        
-        vision_connection_timer = self.create_timer(0.5, self.vision_connection_cb)
-        joint_states_timer = self.create_timer(0.5, self.robot_connection_cb)
-
-        # Robot Status Labels
-        ctk.CTkLabel(self.main_window, text="Fanuc Status:").grid(column = LEFT_COLUMN, row = 3)
-        self.fanuc_status_label = ctk.CTkLabel(self.main_window, text="Not Connected", text_color="red")
-        self.fanuc_status_label.grid(column = LEFT_COLUMN, row = 4, padx=5)
-
-        ctk.CTkLabel(self.main_window, text="Motoman Status:").grid(column = RIGHT_COLUMN, row = 3)
-        self.motoman_status_label = ctk.CTkLabel(self.main_window, text="Not Connected", text_color="red")
-        self.motoman_status_label.grid(column = RIGHT_COLUMN, row = 4, padx=5) 
-        
-    # VISION FUNCTIONS
-    def setup_vision_tab(self):
-        self.vision_frame.grid_rowconfigure(0, weight=1)
-        self.vision_frame.grid_rowconfigure(100, weight=1)
-        self.vision_frame.grid_columnconfigure(0, weight=1)
-        self.vision_frame.grid_columnconfigure(10, weight=1)
-        
-        # Headers
-        fanuc_header_label = ctk.CTkLabel(self.vision_frame, text="FANUC")
-        fanuc_header_label.grid(column = LEFT_COLUMN, row=1)
-        motoman_header_label = ctk.CTkLabel(self.vision_frame, text="MOTOMAN")
-        motoman_header_label.grid(column = MIDDLE_COLUMN, row=1)
-        teach_table_header_label = ctk.CTkLabel(self.vision_frame, text="TEACH TABLE")
-        teach_table_header_label.grid(column = RIGHT_COLUMN, row=1)
-        
-        # Status Labels
-        fanuc_status_header_label = ctk.CTkLabel(self.vision_frame, text="Status:")
-        fanuc_status_header_label.grid(column = LEFT_COLUMN, row=2)
-        self.fanuc_vision_status_label = ctk.CTkLabel(self.vision_frame, text="Not Connected", text_color = "red")
-        self.fanuc_vision_status_label.grid(column=LEFT_COLUMN, row=3)
-
-        motoman_status_header_label = ctk.CTkLabel(self.vision_frame, text="Status:")
-        motoman_status_header_label.grid(column = MIDDLE_COLUMN, row=2)
-        self.motoman_vision_status_label = ctk.CTkLabel(self.vision_frame, text="Not Connected", text_color = "red")
-        self.motoman_vision_status_label.grid(column=MIDDLE_COLUMN, row=3)
-        
-        teach_status_header_label = ctk.CTkLabel(self.vision_frame, text="Status:")
-        teach_status_header_label.grid(column = RIGHT_COLUMN, row=2)
-        self.teach_table_status_label = ctk.CTkLabel(self.vision_frame, text="Not Connected", text_color = "red")
-        self.teach_table_status_label.grid(column=RIGHT_COLUMN, row=3)
-        
-        # Image Labels
-        self.fanuc_image_label = ctk.CTkLabel(self.vision_frame, text="")
-        self.fanuc_image_label.grid(column=LEFT_COLUMN, row=4)
-
-        self.motoman_image_label = ctk.CTkLabel(self.vision_frame, text="")
-        self.motoman_image_label.grid(column=MIDDLE_COLUMN, row=4)
-        
-        self.teach_table_image_label = ctk.CTkLabel(self.vision_frame, text="")
-        self.teach_table_image_label.grid(column=RIGHT_COLUMN, row=4)
-        
-        # Service buttons
-        self.locate_trays_fanuc_vision_button = ctk.CTkButton(self.vision_frame, text="Locate fanuc trays", command=self.locate_fanuc_trays)
-        self.locate_trays_fanuc_vision_button.grid(column=LEFT_COLUMN, row=5)
-        self.update_slots_fanuc_vision_button = ctk.CTkButton(self.vision_frame, text="Update fanuc slots", command=self.update_fanuc_slots, state=tk.DISABLED)
-        self.update_slots_fanuc_vision_button.grid(column=LEFT_COLUMN, row=6)
-
-        self.locate_trays_motoman_vision_button = ctk.CTkButton(self.vision_frame, text="Locate motoman trays", command=self.locate_motoman_trays)
-        self.locate_trays_motoman_vision_button.grid(column=MIDDLE_COLUMN, row=5)
-        self.update_slots_motoman_vision_button = ctk.CTkButton(self.vision_frame, text="Update motoman slots", command=self.update_motoman_slots, state=tk.DISABLED)
-        self.update_slots_motoman_vision_button.grid(column=MIDDLE_COLUMN, row=6)
-        
-        self.locate_trays_teach_table_vision_button = ctk.CTkButton(self.vision_frame, text="Locate teach table trays", command=self.locate_teach_table_trays)
-        self.locate_trays_teach_table_vision_button.grid(column=RIGHT_COLUMN, row=5)
-        self.update_slots_teach_table_vision_button = ctk.CTkButton(self.vision_frame, text="Update teach table slots", command=self.update_teach_table_slots, state=tk.DISABLED)
-        self.update_slots_teach_table_vision_button.grid(column=RIGHT_COLUMN, row=6)
-        
-        # Map canvases
-        self.fanuc_canvas = tk.Canvas(self.vision_frame, width = self.display_image_size[0], height=self.display_image_size[1] + 50, bd = 0, highlightthickness=0)
-        self.fanuc_canvas.grid(row = 7,column = LEFT_COLUMN, sticky = "we", padx=50)
-
-        self.motoman_canvas = tk.Canvas(self.vision_frame, width = self.display_image_size[0], height=self.display_image_size[1] + 50, bd = 0, highlightthickness=0)
-        self.motoman_canvas.grid(row = 7,column = MIDDLE_COLUMN, sticky = "we", padx=50)
-        
-        self.teach_table_canvas = tk.Canvas(self.vision_frame, width = self.display_image_size[0], height=self.display_image_size[1] + 50, bd = 0, highlightthickness=0)
-        self.teach_table_canvas.grid(row = 7,column = RIGHT_COLUMN, sticky = "we", padx=50)
-        
-        self.fanuc_image_update_var.trace_add("write", self.fanuc_image_update)
-        self.motoman_image_update_var.trace_add("write", self.motoman_image_update)
-        self.teach_image_update_var.trace_add("write", self.teach_image_update)
-        
-    
-    def fanuc_image_cb(self, msg: ImageMsg):
-        # fanuc_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="passthrough")
-        # # print(fanuc_image.shape)
-        # self.fanuc_image.put(ctk.CTkImage(Image.fromarray(fanuc_image), size=(375, 211)))
-        # self.fanuc_image_update()
-        self.most_recent_fanuc_vision_time = time()
-        self.fanuc_image = msg
-        self.fanuc_image_update_var.set((self.fanuc_image_update_var.get()+1)%2)
-    
-    def fanuc_image_update(self, _, __, ___):
-        cv_image = self.bridge.imgmsg_to_cv2(self.fanuc_image, "rgb8")
-        self.fanuc_image_ratios = (self.display_image_size[0]/cv_image.shape[0], self.display_image_size[1]/cv_image.shape[1])
-        frame_to_show = Image.fromarray(cv_image)
-        self.fanuc_image_label.configure(image=ctk.CTkImage(frame_to_show, size=(375, 211)))
-    
-    def motoman_image_cb(self, msg: ImageMsg):
-        self.most_recent_motoman_vision_time = time()
-        self.motoman_image = msg
-        self.motoman_image_update_var.set((self.motoman_image_update_var.get()+1)%2)
-    
-    def motoman_image_update(self, _, __, ___):
-        cv_image = self.bridge.imgmsg_to_cv2(self.motoman_image, "rgb8")
-        self.motoman_image_ratios = (self.display_image_size[0]/cv_image.shape[0], self.display_image_size[1]/cv_image.shape[1])
-        frame_to_show = Image.fromarray(cv_image)
-        self.motoman_image_label.configure(image=ctk.CTkImage(frame_to_show, size=(375, 211)))
-
-    def teach_table_image_cb(self, msg: ImageMsg):
-        self.most_recent_teach_vision_time = time()
-        self.teach_image = msg
-        self.teach_image_update_var.set((self.teach_image_update_var.get()+1)%2)
-    
-    def teach_image_update(self, _, __, ___):
-        cv_image = self.bridge.imgmsg_to_cv2(self.teach_image, "rgb8")
-        self.teach_table_image_ratios = (self.display_image_size[0]/cv_image.shape[0], self.display_image_size[1]/cv_image.shape[1])
-        frame_to_show = Image.fromarray(cv_image)
-        self.teach_table_image_label.configure(image=ctk.CTkImage(frame_to_show, size=(375, 211)))
-    
-    def vision_connection_cb(self):
-        current_time = time()
-        if current_time - self.most_recent_fanuc_vision_time > 5.0:
-            self.fanuc_vision_status_label.configure(text="Not Connected", text_color = "red")
-        else:
-            self.fanuc_vision_status_label.configure(text="Connected", text_color = "green")
-        
-        if current_time - self.most_recent_motoman_vision_time > 5.0:
-            self.motoman_vision_status_label.configure(text="Not Connected", text_color = "red")
-        else:
-            self.motoman_vision_status_label.configure(text="Connected", text_color = "green")
-
-        if current_time - self.most_recent_teach_vision_time > 5.0:
-            self.teach_table_status_label.configure(text="Not Connected", text_color = "red")
-        else:
-            self.teach_table_status_label.configure(text="Connected", text_color = "green")
-    
-    def locate_fanuc_trays(self):
-        request = LocateTrays.Request()
-        future = self.locate_fanuc_trays_client.call_async(request)
-
-        start = time()
-        while not future.done():
-            pass
-            if time()-start >= 5.0:
-                self.get_logger().warn("Unable to locate Fanuc trays. Be sure that the Fanuc is not blocking the vision system\n")
-                return
-
-        self.locate_trays_fanuc_vision_button.configure(state=tk.DISABLED)
-        self.update_slots_fanuc_vision_button.configure(state=tk.NORMAL)
-    
-    def update_fanuc_slots(self):
-        request = Trigger.Request()
-        future = self.update_fanuc_slots_client.call_async(request)
-
-        start = time()
-        while not future.done():
-            pass
-            if time()-start >= 5.0:
-                self.get_logger().warn("Unable to update fanuc slots. Be sure that the Fanuc is not blocking the vision system")
-                return
+    def update_imgs(self):
+        for vision_system in GuiClass.vision_systems_:
+            cv_image = self.stream_handlers[vision_system].read_frame()
+            cv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
+            width = int(cv_image.shape[1] * self.img_max_height / cv_image.shape[0])
+            self.most_recent_imgs[vision_system] = ctk.CTkImage(Image.fromarray(cv_image), size=(width, self.img_max_height))
             
-    def locate_motoman_trays(self):
-        request = LocateTrays.Request()
-        future = self.locate_motoman_trays_client.call_async(request)
+            if vision_system == self.vision_selection.get():
+                self.live_image_label.current_image = self.most_recent_imgs[vision_system]
 
-        start = time()
-        while not future.done():
-            pass
-            if time()-start >= 5.0:
-                self.get_logger().warn("Unable to locate Motoman trays. Be sure that the Motoman is not blocking the vision system")
-                return
-
-        self.locate_trays_motoman_vision_button.configure(state=tk.DISABLED)
-        self.update_slots_motoman_vision_button.configure(state=tk.NORMAL)
-    
-    def update_motoman_slots(self):
-        request = Trigger.Request()
-        future = self.update_motoman_slots_client.call_async(request)
-
-        start = time()
-        while not future.done():
-            pass
-            if time()-start >= 5.0:
-                self.get_logger().warn("Unable to update motoman slots. Be sure that the Motoman is not blocking the vision system")
-                return
-    
-    def locate_teach_table_trays(self):
-        request = LocateTrays.Request()
-        future = self.locate_teach_table_trays_client.call_async(request)
-
-        start = time()
-        while not future.done():
-            pass
-            if time()-start >= 5.0:
-                self.get_logger().warn("Unable to locate teach table trays. Be sure that there is nothing blocking the teach table")
-                return
-            
-        self.locate_trays_teach_table_vision_button.configure(state=tk.DISABLED)
-        self.update_slots_teach_table_vision_button.configure(state=tk.NORMAL)
-    
-    def update_teach_table_slots(self):
-        request = Trigger.Request()
-        future = self.update_teach_table_slots_client.call_async(request)
-
-        start = time()
-        while not future.done():
-            pass
-            if time()-start >= 5.0:
-                self.get_logger().warn("Unable to update teach table slots. Be sure that there is nothing blocking the teach table")
-                return
-    
-
-    # Pixel callbacks
-    def update_fanuc_canvas(self, msg: SlotPixel):
-        self.fanuc_canvas.delete("all")
-        for tray in msg.kit_trays:
-            tray: PixelCenter
-            self.draw_kitting_tray(self.fanuc_canvas, int(tray.x * self.fanuc_image_ratios[0]), int(tray.y * self.fanuc_image_ratios[1]), angle=tray.angle)
-            for slot in tray.slots:
-                slot: PixelSlotInfo
-                if slot.occupied:
-                    self.draw_gear(self.fanuc_canvas, int(slot.slot_center_x * self.fanuc_image_ratios[0]), int(slot.slot_center_y * self.fanuc_image_ratios[1]), slot.size)
-        for tray in msg.part_trays:
-            tray: PixelCenter
-            self.get_logger().info(str(tray.x * self.fanuc_image_ratios[0]) + "\t" + str(tray.y * self.fanuc_image_ratios[1]))
-            # self.get_logger().info(str(tray.x) + "\t" + str(tray.y))
-            # self.get_logger().info(str(self.display_image_size))
-            self.draw_gear_tray(self.fanuc_canvas, int(tray.x * self.fanuc_image_ratios[0]), int(tray.y * self.fanuc_image_ratios[1]), tray.identifier, angle=tray.angle)
-            for slot in tray.slots:
-                slot: PixelSlotInfo
-                if slot.occupied:
-                    self.get_logger().info("OCCUPIED")
-                    self.draw_gear(self.fanuc_canvas, int(slot.slot_center_x * self.fanuc_image_ratios[0]), int(slot.slot_center_y * self.fanuc_image_ratios[1]), slot.size)
-    
-    def update_motoman_canvas(self, msg: SlotPixel):
-        self.get_logger().info("Inside update motoman canvas")
-        self.motoman_canvas.delete("all")
-        self.get_logger().info(f"There are {len(msg.kit_trays)} kit trays and {len(msg.part_trays)} part trays for the motoman")
-        for tray in msg.kit_trays:
-            tray: PixelCenter
-            self.get_logger().info(f"Angle for motoman kit tray: {tray.angle}")
-            self.draw_kitting_tray(self.motoman_canvas, tray.x * self.motoman_image_ratios[0], tray.y * self.motoman_image_ratios[1], angle=tray.angle)
-            for slot in tray.slots:
-                slot: PixelSlotInfo
-                if slot.occupied:
-                    self.get_logger().info("OCCUPIED")
-                    self.draw_gear(self.motoman_canvas, slot.slot_center_x * self.motoman_image_ratios[0], slot.slot_center_y * self.motoman_image_ratios[1], slot.size)
-        for tray in msg.part_trays:
-            tray: PixelCenter
-            self.draw_gear_tray(self.motoman_canvas, tray.x * self.motoman_image_ratios[0], tray.y * self.motoman_image_ratios[1], tray.identifier, angle=tray.angle)
-            for slot in tray.slots:
-                slot: PixelSlotInfo
-                if slot.occupied:
-                    self.get_logger().info("OCCUPIED")
-                    self.draw_gear(self.motoman_canvas, slot.slot_center_x * self.motoman_image_ratios[0], slot.slot_center_y * self.motoman_image_ratios[1], slot.size)
-    
-    def update_teach_table_canvas(self, msg: SlotPixel):
-        self.teach_table_canvas.delete("all")
-        for tray in msg.kit_trays:
-            tray: PixelCenter
-            self.draw_kitting_tray(self.teach_table_canvas, tray.x * self.teach_table_image_ratios[0], tray.y * self.teach_table_image_ratios[1], angle=tray.angle)
-            for slot in tray.slots:
-                slot: PixelSlotInfo
-                if slot.occupied:
-                    self.draw_gear(self.teach_table_canvas, slot.slot_center_x * self.teach_table_image_ratios[0], slot.slot_center_y * self.teach_table_image_ratios[1], slot.size)
-        for tray in msg.part_trays:
-            tray: PixelCenter
-            self.draw_gear_tray(self.teach_table_canvas, tray.x * self.teach_table_image_ratios[0], tray.y * self.teach_table_image_ratios[1], tray.identifier, angle=tray.angle)
-            for slot in tray.slots:
-                slot: PixelSlotInfo
-                if slot.occupied:
-                    self.draw_gear(self.teach_table_canvas, slot.slot_center_x * self.teach_table_image_ratios[0], slot.slot_center_y * self.teach_table_image_ratios[1], slot.size)
-
-    # Draw on canvas
-    def draw_gear(self, canvas: tk.Canvas, center_x: int, center_y: int, gear_type: int):
-        color, size = GEAR_COLORS_AND_SIZES[gear_type]
-        canvas.create_oval(center_x-size, center_y-size, center_x+size, center_y+size, fill=color)
-    
-    def draw_gear_tray(self, canvas: tk.Canvas, center_x: int, center_y: int, tray_type, angle: float = 0.0):
-        color, size = GEAR_TRAY_COLORS_AND_SIZES[tray_type]
-        points = [center_x-size[0], center_y-size[1], center_x-size[0], center_y+size[1], center_x+size[0], center_y+size[1], center_x+size[0], center_y-size[1]]
-        self.rotate_shape(center_x, center_y, points, angle)
-        canvas.create_polygon(points, fill=color)
-    
-    def draw_kitting_tray(self, canvas: tk.Canvas, center_x: int, center_y: int, angle: float = 0.0):
-        points = [center_x -20,center_y-20, center_x+20,center_y-20, center_x+20,center_y+8, center_x+6, center_y+20, center_x-6,center_y+20, center_x-20, center_y+8]
-        # self.rotate_shape(center_x, center_y, points, angle)
-        canvas.create_polygon(points, fill="brown")
-        
-    def rotate_shape(self, center_x: int, center_y: int, points, rotation: float):
-        angle = self.degs_to_rads(rotation)
-        for i in range(0,len(points),2):
-            original_x = copy(points[i] - center_x)
-            original_y = copy(points[i+1] - center_y)
-            points[i] = int((original_x * cos(angle) + original_y * sin(angle))) + center_x
-            points[i+1] = int((-1 * original_x * sin(angle) + original_y * cos(angle))) + center_y
-    
-    def fanuc_joint_state_cb(self, msg:JointState):
-        self.most_recent_joint_states_times["fanuc"] = time()
-        self.most_recent_joint_states["fanuc"] = msg
-        if not self.joint_states_recieved["fanuc"]:
-            self.update_fanuc_frame()
-
-    def motoman_joint_state_cb(self, msg:JointState):
-        self.most_recent_joint_states_times["motoman"] = time()
-        self.most_recent_joint_states["motoman"] = msg
-        if not self.joint_states_recieved["motoman"]:
-            self.update_motoman_frame()
+            height_in_inches = cv_image.shape[0] / 30
+            height_in_meters = height_in_inches * 0.0254
+            self.visualization_canvases[vision_system].global_conversion_factor = 400 / height_in_meters
+            self.visualization_canvases[vision_system].width = width
         
 
-    def robot_connection_cb(self):
-        if time() - self.most_recent_joint_states_times["fanuc"] <= 3.0:
-            self.fanuc_status_label.configure(text="Connected", text_color="green")
-            self.update_fanuc_info()
-        else:
-            self.fanuc_status_label.configure(text="Not Connected", text_color="red")
+        self.main_wind.after(50, self.update_imgs)
 
-        if time() - self.most_recent_joint_states_times["motoman"] <= 3.0:
-            self.motoman_status_label.configure(text="Connected", text_color="green")
-            self.get_logger().info("Should update motoman joint info")
-            self.update_motoman_info()
-        else:
-            self.motoman_status_label.configure(text="Not Connected", text_color="red")
-        
-        frames_dict = yaml.safe_load(self.tf_buffer.all_frames_as_yaml())
-        try:
-            self.frames_list = list(frames_dict.keys())
-        except:
-            self.frames_list = []
+    def add_visualization_widgets_to_frame(self):
+        # Locate Trays widgets
+        self.locate_trays_frame = ctk.CTkFrame(self.visualization_frame, 200, 800, fg_color="#EBEBEB")
+        self.locate_trays_vars = {vision_system: ctk.StringVar(value="0") for vision_system in GuiClass.vision_systems_}
+        self.locate_trays_cbs_: dict[str: ctk.CTkCheckBox] = {}
+        self.locate_trays_label = ctk.CTkLabel(self.locate_trays_frame, text="Select the vision systems to locate trays for")
+        self.locate_trays_label.pack(pady=50)
+        row = 1
+        for vision_system in GuiClass.vision_systems_:
+            self.locate_trays_cbs_[vision_system] = ctk.CTkCheckBox(self.locate_trays_frame,text=vision_system, variable=self.locate_trays_vars[vision_system], onvalue="1", offvalue="0", height=1, width=20)
+            self.locate_trays_cbs_[vision_system].pack(pady=30, ipadx=15, expand=True)
+            row += 1
+        self.locate_trays_button = ctk.CTkButton(self.locate_trays_frame, text="Locate trays", command=self.locate_trays)
+        self.locate_trays_button.pack(pady=50)
+        self.locate_trays_frame.grid(column = 0, row = 2, rowspan=6, padx=20)
+
+
+        # Visualization menu widgets
+        vision_selection_label = ctk.CTkLabel(self.visualization_frame, text="Select the vision system for the live view")
+        vision_selection_label.grid(column = 1, row = 0, pady=1, sticky="ew")
+        self.vision_selection = ctk.StringVar(value=GuiClass.vision_systems_[0])
+        self.vision_selection_menu = ctk.CTkOptionMenu(self.visualization_frame, variable=self.vision_selection, values=GuiClass.vision_systems_)
+        self.vision_selection_menu.grid(column = 1, row = 1, pady = 1, sticky="ew")
+
+        self.center_visualization_frame = ctk.CTkFrame(self.visualization_frame, 600, 900, fg_color="#EBEBEB")
+        self.live_image_label = LiveImage(self.center_visualization_frame)
+        self.live_image_label.pack(pady=1, padx=20)
+        self.center_visualization_frame.grid(column = 1, row = 2, rowspan=6, padx=20)
+
+        # Subcanvas frame
+        self.subcanvas_frame = ctk.CTkFrame(self.visualization_frame, 400, 900, fg_color="#EBEBEB")
+        self.subcanvas_frame.pack_propagate(0)
+        self.subcanvas_frame.grid(column = 2, row = 2, rowspan=8, padx=20)
+
+        self.visualization_canvases = {vision_system: TrayCanvas(self.main_wind) for vision_system in GuiClass.vision_systems_}
+        for vision_system in GuiClass.vision_systems_:
+            self.visualization_canvases[vision_system].bind('<Button-1>', partial(self.vis_clicked, vision_system))
+        self.visualization_labels: list[ctk.CTkLabel] = []
+
+        self.show_all_canvases(1,1,1)
+        self.vision_selection.trace_add("write", self.show_all_canvases)
+
+    def trays_cb_(self, vision_system: str, msg: Trays):
+        all_trays: list[Tray] = msg.kit_trays + msg.part_trays
+        self.visualization_canvases[vision_system].trays_info_recieved = True
+        self.visualization_canvases[vision_system].all_trays = all_trays
+
+        for robot in GuiClass.robots_:
+            if robot in vision_system:
+                for tray in all_trays:
+                    for slot in tray.slots:
+                        if slot.occupied:
+                            self.occupied_slots[robot].append(slot.name)
+                        else:
+                            self.unoccupied_slots[robot].append(slot.name)
+                occupied_refresh = len(self.occupied_slots[robot]) > 0 and len(self.services_frame.occupied_slots[robot]) == 0
+                unoccupied_refresh = len(self.unoccupied_slots[robot]) > 0 and len(self.services_frame.unoccupied_slots[robot]) == 0
+                self.occupied_slots[robot] = list(set(self.occupied_slots[robot]))
+                self.unoccupied_slots[robot] = list(set(self.unoccupied_slots[robot]))
+                self.services_frame.occupied_slots = self.occupied_slots
+                self.services_frame.unoccupied_slots = self.unoccupied_slots
+
+                if occupied_refresh or unoccupied_refresh:
+                    self.services_frame.reload_services_frames()
     
-    # Services tab
-    def setup_services_tab(self):
-        self.service_frame.grid_rowconfigure(0, weight=1)
-        self.service_frame.grid_rowconfigure(100, weight=1)
-        self.service_frame.grid_columnconfigure(0, weight=1)
-        self.service_frame.grid_columnconfigure(10, weight=1)
-
-        self.selected_service_robot = ctk.StringVar(value=ROBOTS[0])
-        robot_service_label = ctk.CTkLabel(self.service_frame, text="Select the robot to call the service for")
-        robot_service_label.grid(column=MIDDLE_COLUMN, row=1)
-
-        robot_selection_menu = ctk.CTkOptionMenu(self.service_frame, variable=self.selected_service_robot, values=ROBOTS)
-        robot_selection_menu.grid(column=MIDDLE_COLUMN, row=2)
-        
-        service_selection_label = ctk.CTkLabel(self.service_frame, text="Select the service to call")
-        service_selection_label.grid(column=MIDDLE_COLUMN, row=3, padx = 30)
-
-        service_types = copy(self._service_types)
-        if len(self.named_positions[self.selected_service_robot.get()]) == 0:
-            service_types = self._service_types[1:]
-        
-        self.selected_service = ctk.StringVar(value=service_types[0])
-        service_selection_menu = ctk.CTkOptionMenu(self.service_frame, variable=self.selected_service, values=service_types)
-        service_selection_menu.grid(column=MIDDLE_COLUMN, row = 4)
-
-        self.service_menu_widgets = []
-        self.selected_named_pose = ctk.StringVar()
-        if len(self.named_positions[self.selected_service_robot.get()]) > 0:
-            self.selected_named_pose.set(self.named_positions[self.selected_service_robot.get()][0])
-        self.selected_frame = ctk.StringVar(value="")
-
-        self.frame_menu = ctk.CTkComboBox(self.service_frame, variable=self.selected_frame, values=self.frames_list)
-        
-        self.update_service_menu(1,1,1)
-
-        call_service_button = ctk.CTkButton(self.service_frame, text="Call Service", command=self.call_robot_service)
-        call_service_button.grid(column=MIDDLE_COLUMN, row=30)
-
-        self.selected_service_robot.trace_add("write", self.update_service_menu)
-        self.selected_service.trace_add("write", self.update_service_menu)
-        self.selected_frame.trace_add("write", self.only_show_matching_frames)
-
+    def joint_state_cb(self, robot: str, msg: JointState):
+        self.status_frames[robot].most_recent_time = time()
     
-    def update_service_menu(self, _, __, ___):
-        for widget in self.service_menu_widgets:
-            widget.grid_forget()
+    def locate_trays(self):
+        c = 0
+        for vision_system in GuiClass.vision_systems_:
+            if self.locate_trays_vars[vision_system].get() == "1":
+                request = LocateTrays.Request()
+                future = self.locate_clients[vision_system].call_async(request)
+
+                start = time()
+                success = True
+                while not future.done():
+                    pass
+                    if time()-start >= 3.0:
+                        self.get_logger().warn(f"Unable to locate trays for {vision_system}.\n")
+                        success = False
+                        break
+                if not success:
+                    continue
+                self.locate_trays_cbs_[vision_system].grid_forget()
+                c+=1
+        if c == len(GuiClass.vision_systems_):
+            self.locate_trays_label.grid_forget()
+            self.locate_trays_button.grid_forget()
+    
+    def show_all_canvases(self, _, __, ___):
+        self.live_image_label.current_image = self.most_recent_imgs[self.vision_selection.get()]
+        for canvas in self.visualization_canvases.values():
+            canvas.grid_forget()
+            canvas.pack_forget()
+
+        for label in self.visualization_labels:
+            label.grid_forget()
+            label.pack_forget()
+        self.visualization_labels.clear()
         
-        self.selected_frame.set("")
+        self.visualization_canvases[self.vision_selection.get()].side_canvas = False
+        self.visualization_canvases[self.vision_selection.get()].update_canvas(True)
+        self.visualization_canvases[self.vision_selection.get()].pack(in_=self.center_visualization_frame, pady=20, padx=20)
+        self.visualization_labels.append(ctk.CTkLabel(self.center_visualization_frame, text=self.vision_selection.get()))
+        self.visualization_labels[-1].pack(pady=5, padx=20)
 
-        if self.selected_service.get() == "move_to_named_pose":
-            self.service_menu_widgets.append(ctk.CTkLabel(self.service_frame, text="Select the pose to move to:"))
-            self.service_menu_widgets[-1].grid(column = MIDDLE_COLUMN, row = 5)
+        current_row = 0
+        for vision_system in GuiClass.vision_systems_:
+            if vision_system != self.vision_selection.get():
+                self.visualization_canvases[vision_system].side_canvas = True
+                self.visualization_canvases[vision_system].update_canvas(True)
+                self.visualization_canvases[vision_system].grid(in_=self.subcanvas_frame, column = 0, row = current_row, pady=5, padx=20, sticky="ew")
+                current_row += 1
+                self.visualization_labels.append(ctk.CTkLabel(self.subcanvas_frame, text=vision_system))
+                self.visualization_labels[-1].grid(in_=self.subcanvas_frame, column = 0, row = current_row, pady=5, padx=20, sticky="ew")
+                current_row += 1
 
-            self.service_menu_widgets.append(ctk.CTkOptionMenu(self.service_frame, variable=self.selected_named_pose, values = self.named_positions[self.selected_service_robot.get()]))
-            self.service_menu_widgets[-1].grid(column = MIDDLE_COLUMN, row = 6)
-
-        elif self.selected_service.get() == "pick_from_slot":
-            self.service_menu_widgets.append(ctk.CTkLabel(self.service_frame, text="Select the frame for picking:"))
-            self.service_menu_widgets[-1].grid(column = MIDDLE_COLUMN, row = 5)
-
-            self.service_menu_widgets.append(self.frame_menu)
-            self.service_menu_widgets[-1].grid(column = MIDDLE_COLUMN, row = 6)
-        
-        else:
-            self.service_menu_widgets.append(ctk.CTkLabel(self.service_frame, text="Select the frame for placing:"))
-            self.service_menu_widgets[-1].grid(column = MIDDLE_COLUMN, row = 5)
-
-            self.service_menu_widgets.append(self.frame_menu)
-            self.service_menu_widgets[-1].grid(column = MIDDLE_COLUMN, row = 6)
-
-    def call_robot_service(self):
-        if self.selected_service.get() == "move_to_named_pose":
-            move_to_named_pose_request = MoveToNamedPose.Request()
-            move_to_named_pose_request.name = self.selected_named_pose.get()
-
-            future = self.service_clients[self.selected_service_robot.get()][self.selected_service.get()].call_async(move_to_named_pose_request)
-
-            start = time()
-            while not future.done():
-                pass
-                if time()-start >= 15.0:
-                    self.get_logger().warn("Unable to Move fanuc to desired pose")
-                    return
-        elif self.selected_service.get() == "pick_from_slot":
-            pass
-        
-        else:
-            pass
-
-    # Get Named Positions
-    def get_named_positions(self, robot_name: str):
-        moveit_package = get_package_share_directory(f'{robot_name}_moveit_config')
-        srdf_file_path = moveit_package + f"/config/{robot_name}.srdf"
-        found_named_positions = []
-        with open(srdf_file_path, "+r") as f:
-            for line in f:
-                if "group_state" in line and " name" in line:
-                    found_name = ""
-                    inside_quotes = False
-                    for c in line[line.find(" name"):]:
-                        if c == '"':
-                            if inside_quotes == False:
-                                inside_quotes = True
-                                continue
-                            else:
-                                break
-                        if inside_quotes:
-                            found_name += c
-                    found_named_positions.append(found_name)
-        return found_named_positions
-
-    def only_show_matching_frames(self, _, __, ___):
-        selection = self.selected_frame.get()
-
-        if selection in self.frames_list:
-            self.frame_menu.configure(values = self.frames_list)
-        else:
-            options = []
-            for topic in self.frames_list:
-                if selection.lower() in topic.lower():
-                    options.append(topic)
-                else:
-                    for i in range(len(topic)-len(selection)):
-                        if SequenceMatcher(None, selection.lower(), topic[i:i+len(selection)].lower()).ratio() > 0.6:
-                            options.append(topic)
-            self.frame_menu.configure(values = list(set(options)))
-
-    def setup_fanuc_frame(self):
-        self.fanuc_frame.grid_rowconfigure(0, weight=1)
-        self.fanuc_frame.grid_rowconfigure(100, weight=1)
-        self.fanuc_frame.grid_columnconfigure(0, weight=1)
-        self.fanuc_frame.grid_columnconfigure(10, weight=1)
-
-        self.fanuc_states_not_recieved_yet_label = ctk.CTkLabel(self.fanuc_frame, text="No joint states have been recieved for the fanuc")
-        self.fanuc_states_not_recieved_yet_label.grid(row = 1, column = MIDDLE_COLUMN)
-
-        self.fanuc_joint_states_recieved_time_label = ctk.CTkLabel(self.fanuc_frame, text="")
-        self.fanuc_joint_states_names_label = ctk.CTkLabel(self.fanuc_frame, text="")
-        self.fanuc_joint_states_positions_label = ctk.CTkLabel(self.fanuc_frame, text="")
-    
-    def update_fanuc_frame(self):
-        if not self.joint_states_recieved["fanuc"]:
-            self.joint_states_recieved["fanuc"] = True
-            self.fanuc_states_not_recieved_yet_label.grid_forget()
-            self.fanuc_joint_states_recieved_time_label.grid(column=LEFT_COLUMN, row = 1, padx = 15)
-            self.fanuc_joint_states_recieved_time_label.configure(text=strftime('%Y-%m-%d %H:%M:%S', localtime(self.most_recent_joint_states_times["fanuc"])))
-            
-            self.fanuc_joint_states_names_label.grid(column = RIGHT_COLUMN, row = 1, padx = 15)
-            self.fanuc_joint_states_positions_label.grid(column = RIGHT_COLUMN+1, row = 1, padx = 15)
-            self.update_motoman_info_button.grid(column = MIDDLE_COLUMN, row = 20, padx=15, pady=10)
-
-            self.most_recent_joint_states: dict[str, JointState]
-        joint_states_names_str = "Name\n"
-        joint_states_positions_str = "Position\n"
-        for i in range(len(self.most_recent_joint_states["fanuc"].name)):
-            joint_states_names_str += self.most_recent_joint_states["fanuc"].name[i] +'\n'
-            joint_states_positions_str += str(self.most_recent_joint_states["fanuc"].position[i]) + '\n'
-
-        self.fanuc_joint_states_names_label.configure(text = joint_states_names_str)
-        self.fanuc_joint_states_positions_label.configure(text = joint_states_positions_str)
-    
-    def update_fanuc_info(self):
-        self.motoman_joint_states_recieved_time_label.configure(text=strftime('%Y-%m-%d %H:%M:%S', localtime(self.most_recent_joint_states_times["fanuc"])))
-
-        self.most_recent_joint_states: dict[str, JointState]
-        joint_states_names_str = "Name\n"
-        joint_states_positions_str = "Position\n"
-        for i in range(len(self.most_recent_joint_states["motoman"].name)):
-            joint_states_names_str += self.most_recent_joint_states["motoman"].name[i] +'\n'
-            joint_states_positions_str += str(self.most_recent_joint_states["motoman"].position[i]) + '\n'
-
-        self.fanuc_joint_states_names_label.configure(text = joint_states_names_str)
-        self.fanuc_joint_states_positions_label.configure(text = joint_states_positions_str)
-    
-    def setup_motoman_frame(self):
-        self.motoman_frame.grid_rowconfigure(0, weight=1)
-        self.motoman_frame.grid_rowconfigure(100, weight=1)
-        self.motoman_frame.grid_columnconfigure(0, weight=1)
-        self.motoman_frame.grid_columnconfigure(10, weight=1)
-
-        self.motoman_states_not_recieved_yet_label = ctk.CTkLabel(self.motoman_frame, text="No joint states have been recieved for the motoman")
-        self.motoman_states_not_recieved_yet_label.grid(row = 1, column = MIDDLE_COLUMN)
-
-        self.motoman_joint_states_recieved_time_label = ctk.CTkLabel(self.motoman_frame, text="")
-        self.motoman_joint_states_names_label = ctk.CTkLabel(self.motoman_frame, text="")
-        self.motoman_joint_states_positions_label = ctk.CTkLabel(self.motoman_frame, text="")
-        self.motoman_joint_states_velocities_label = ctk.CTkLabel(self.motoman_frame, text="")
-        self.motoman_joint_states_accelerations_label = ctk.CTkLabel(self.motoman_frame, text="")
-    
-    def update_motoman_frame(self):
-        if not self.joint_states_recieved["motoman"]:
-            self.joint_states_recieved["motoman"] = True
-            self.motoman_states_not_recieved_yet_label.grid_forget()
-            self.motoman_joint_states_recieved_time_label.grid(column=LEFT_COLUMN, row = 1, padx = 15)
-            self.motoman_joint_states_recieved_time_label.configure(text=strftime('%Y-%m-%d %H:%M:%S', localtime(self.most_recent_joint_states_times["motoman"])))
-            
-            self.motoman_joint_states_names_label.grid(column = RIGHT_COLUMN, row = 1, padx = 15)
-            self.motoman_joint_states_positions_label.grid(column = RIGHT_COLUMN+1, row = 1, padx = 15)
-            self.motoman_joint_states_velocities_label.grid(column = RIGHT_COLUMN+2, row = 1, padx = 15)
-            self.motoman_joint_states_accelerations_label.grid(column = RIGHT_COLUMN+3, row = 1, padx = 15)
-            self.update_motoman_info_button.grid(column = MIDDLE_COLUMN, row = 20, padx=15, pady=10)
-
-            self.most_recent_joint_states: dict[str, JointState]
-        joint_states_names_str = "Name\n"
-        joint_states_positions_str = "Position\n"
-        joint_states_velocities_str = "Velocities\n"
-        joint_states_accelerations_str = "Accelerations\n"
-        for i in range(len(self.most_recent_joint_states["motoman"].name)):
-            joint_states_names_str += self.most_recent_joint_states["motoman"].name[i] +'\n'
-            joint_states_positions_str += str(self.most_recent_joint_states["motoman"].position[i]) + '\n'
-            joint_states_velocities_str += str(self.most_recent_joint_states["motoman"].velocity[i]) + '\n'
-            joint_states_accelerations_str += str(self.most_recent_joint_states["motoman"].effort[i])  + '\n'
-
-        self.motoman_joint_states_names_label.configure(text = joint_states_names_str)
-        self.motoman_joint_states_positions_label.configure(text = joint_states_positions_str)
-        self.motoman_joint_states_velocities_label.configure(text = joint_states_velocities_str)
-        self.motoman_joint_states_accelerations_label.configure(text = joint_states_accelerations_str)
-    
-    def update_motoman_info(self):
-        self.motoman_joint_states_recieved_time_label.configure(text=strftime('%Y-%m-%d %H:%M:%S', localtime(self.most_recent_joint_states_times["motoman"])))
-
-        self.most_recent_joint_states: dict[str, JointState]
-        joint_states_names_str = "Name\n"
-        joint_states_positions_str = "Position\n"
-        joint_states_velocities_str = "Velocities\n"
-        joint_states_accelerations_str = "Accelerations\n"
-        for i in range(len(self.most_recent_joint_states["motoman"].name)):
-            joint_states_names_str += self.most_recent_joint_states["motoman"].name[i] +'\n'
-            joint_states_positions_str += str(self.most_recent_joint_states["motoman"].position[i]) + '\n'
-            joint_states_velocities_str += str(self.most_recent_joint_states["motoman"].velocity[i]) + '\n'
-            joint_states_accelerations_str += str(self.most_recent_joint_states["motoman"].effort[i])  + '\n'
-
-        self.motoman_joint_states_names_label.configure(text = joint_states_names_str)
-        self.motoman_joint_states_positions_label.configure(text = joint_states_positions_str)
-        self.motoman_joint_states_velocities_label.configure(text = joint_states_velocities_str)
-        self.motoman_joint_states_accelerations_label.configure(text = joint_states_accelerations_str)
-
-    # Utilities
-    def degs_to_rads(self, deg: float) -> float:
-        return deg * pi / 180
+    def vis_clicked(self, vision_system, event):
+        self.vision_selection.set(vision_system)

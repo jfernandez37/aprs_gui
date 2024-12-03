@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 import rclpy
-from aprs_gui.test_gui import GuiClass
+from aprs_gui.old_demo_control_window import DemoControlWindow
 from rclpy.executors import MultiThreadedExecutor
 import threading
 
 def main(args=None):
     rclpy.init(args=args)
     
-    demo = GuiClass()
+    demo = DemoControlWindow()
     executor = MultiThreadedExecutor()
     executor.add_node(demo)
 
     spin_thread = threading.Thread(target=executor.spin)
     spin_thread.start()
     
-    demo.main_wind.mainloop()
+    demo.main_window.mainloop()
         
     executor.shutdown()
 
