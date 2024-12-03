@@ -169,12 +169,12 @@ class TrayCanvas(tk.Canvas):
         points = self.generate_tray_points((tray_x, tray_y), tray.identifier, tray_rotation)
         canvas_points = self.get_canvas_points(points)
         tray_polygon = self.create_polygon(canvas_points, fill=TrayCanvas.tray_colors_[tray.identifier], smooth=True, outline="black", splinesteps=100)
-        tooltip = CanvasTooltip(self, tray_polygon, text=tray.name)
+        # tooltip = CanvasTooltip(self, tray_polygon, text=tray.name)
 
         fiducial_points = self.generate_tray_points((tray_x, tray_y), -1, tray_rotation, False)
         canvas_points = self.get_canvas_points(fiducial_points)
         fiducial_polygon = self.create_polygon(canvas_points, fill="white", smooth=False, outline="black", splinesteps=100)
-        tooltip = CanvasTooltip(self, fiducial_polygon, text=str(tray.name))
+        # tooltip = CanvasTooltip(self, fiducial_polygon, text=str(tray.name))
         
         for slot in tray.slots:
             slot: SlotInfo
@@ -200,7 +200,7 @@ class TrayCanvas(tk.Canvas):
     
     def draw_gear(self, c_x, c_y, radius, slot_name):
         gear_drawing = self.create_oval(c_x - radius, c_y - radius, c_x + radius, c_y + radius, fill="#40bd42")
-        tooltip = CanvasTooltip(self, gear_drawing, text=slot_name)
+        # tooltip = CanvasTooltip(self, gear_drawing, text=slot_name)
 
     def get_tray_angle(self, q):
         R = PyKDL.Rotation.Quaternion(q.x, q.y, q.z, q.w)
