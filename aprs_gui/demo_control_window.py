@@ -72,14 +72,14 @@ class GuiClass(Node):
                 GuiClass.locate_trays_services_[i]
             )
 
-        self.joint_states_subs = {}
-        for robot in GuiClass.robots_:
-                self.joint_states_subs[robot] = self.create_subscription(
-                JointState,
-                f"/{robot}/joint_states",
-                partial(self.joint_state_cb, robot),
-                10
-            )
+        # self.joint_states_subs = {}
+        # for robot in GuiClass.robots_:
+        #         self.joint_states_subs[robot] = self.create_subscription(
+        #         JointState,
+        #         f"/{robot}/joint_states",
+        #         partial(self.joint_state_cb, robot),
+        #         10
+        #     )
         
         self.occupied_slots = {robot: [] for robot in GuiClass.robots_}
         self.unoccupied_slots = {robot: [] for robot in GuiClass.robots_}
@@ -107,12 +107,12 @@ class GuiClass(Node):
 
         self.notebook.grid(pady=10,column=2, row=2, sticky=tk.E+tk.W+tk.N+tk.S)
 
-        self.status_frames: dict[str, RobotStatusFrame] = {}
-        self.status_frames["fanuc"] = RobotStatusFrame(self.main_wind, "fanuc")
-        self.status_frames["fanuc"].grid(pady=10,column=1, row=2, sticky=tk.E+tk.W+tk.N+tk.S)
+        # self.status_frames: dict[str, RobotStatusFrame] = {}
+        # self.status_frames["fanuc"] = RobotStatusFrame(self.main_wind, "fanuc")
+        # self.status_frames["fanuc"].grid(pady=10,column=1, row=2, sticky=tk.E+tk.W+tk.N+tk.S)
 
-        self.status_frames["motoman"] = RobotStatusFrame(self.main_wind, "motoman")
-        self.status_frames["motoman"].grid(pady=10,column=3, row=2, sticky=tk.E+tk.W+tk.N+tk.S)
+        # self.status_frames["motoman"] = RobotStatusFrame(self.main_wind, "motoman")
+        # self.status_frames["motoman"].grid(pady=10,column=3, row=2, sticky=tk.E+tk.W+tk.N+tk.S)
 
         self.update_imgs()
 
@@ -199,8 +199,8 @@ class GuiClass(Node):
                 if occupied_refresh or unoccupied_refresh:
                     self.services_frame.reload_services_frames()
     
-    def joint_state_cb(self, robot: str, msg: JointState):
-        self.status_frames[robot].most_recent_time = time()
+    # def joint_state_cb(self, robot: str, msg: JointState):
+    #     self.status_frames[robot].most_recent_time = time()
     
     def locate_trays(self):
         c = 0

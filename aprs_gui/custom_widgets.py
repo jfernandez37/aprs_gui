@@ -9,22 +9,22 @@ from math import sin, cos, atan2, pi
 from time import time
 from ament_index_python.packages import get_package_share_directory
 import re
+import threading
 from rclpy import spin_once
 from rclpy.node import Node
 from rclpy.action import ActionClient
 from rclpy.task import Future
 from difflib import SequenceMatcher
-import yaml
 from functools import partial
 from time import sleep
+from plansys2_msgs.msg import Plan
 
 from aprs_gui.canvas_tooltips import CanvasTooltip
 
 from aprs_interfaces.msg import Tray, SlotInfo
-from aprs_interfaces.srv import LocateTrays, Pick, Place, MoveToNamedPose, PneumaticGripperControl, GeneratePlan
+from aprs_interfaces.srv import Pick, Place, MoveToNamedPose, PneumaticGripperControl, GeneratePlan
 from aprs_interfaces.action import ExecutePlan
 
-from geometry_msgs.msg import Transform
 
 class LiveImage(ctk.CTkLabel):
     def __init__(self, frame):
@@ -376,20 +376,26 @@ class ServicesFrame(ctk.CTkFrame):
 
             ctk.CTkOptionMenu(self.move_to_named_pose_frame, variable=self.selected_named_pose, values = self.named_positions[self.selected_robot.get()]).pack(pady=20)
 
-            ctk.CTkButton(self.move_to_named_pose_frame, text="Call Service", command=self.call_move_to_named_pose_service_).pack(pady=10)
+            ctk.CTkButton(self.move_to_named_pose_frame, text="Call Service", command=self.call_move_to_named_pose_service_thread).pack(pady=10)
 
+    def call_move_to_named_pose_service_thread(self):
+        thread = threading.Thread(target=self.call_move_to_named_pose_service_)
+        thread.start()
+    
     def call_move_to_named_pose_service_(self):
         move_to_named_pose_request = MoveToNamedPose.Request()
         move_to_named_pose_request.name = self.selected_named_pose.get()
 
         future = self.service_clients[self.selected_robot.get()]["move_to_named_pose"].call_async(move_to_named_pose_request)
-
-        start = time()
-        while not future.done():
-            pass
-            if time()-start >= 5.0:
-                self.node.get_logger().warn(f"Unable to move {self.selected_robot.get()} to desired pose")
-                return
+        future.add_done_callback(self.move_to_names_pose_response_cb)
+    
+    def move_to_names_pose_response_cb(self, future: Future):
+        try:
+            response = future.result()
+            if not response.success:
+                self.node.get_logger().warn(f"Failed to move to {self.selected_named_pose.get()} with {self.selected_robot.get()}")
+        except Exception as e:
+            self.node.get_logger().error("Pick service call ailed: %r" % (e,))
     
     # ==============================================================
     #                            Pick
@@ -407,34 +413,39 @@ class ServicesFrame(ctk.CTkFrame):
             self.pick_frame_menu = ctk.CTkComboBox(self.pick_frame, variable=self.pick_frame_selection, values=self.occupied_slots[self.selected_robot.get()])
             self.pick_frame_menu.pack(pady=10)
 
-            ctk.CTkButton(self.pick_frame, text="Call Service", command=self.call_pick_service).pack(pady=10)
+            ctk.CTkButton(self.pick_frame, text="Call Service", command=self.call_pick_service_thread).pack(pady=10)
 
             self.pick_frame_selection.trace_add('write', partial(self.only_show_matching_frames, self.pick_frame_selection, self.pick_frame_menu, self.occupied_slots[self.selected_robot.get()]))
 
+    def call_pick_service_thread(self):
+        thread = threading.Thread(target=self.call_pick_service)
+        thread.start()
+    
     def call_pick_service(self):
         pick_request = Pick.Request()
         pick_request.frame_name = self.pick_frame_selection.get()
 
         future = self.service_clients[self.selected_robot.get()]["pick_from_slot"].call_async(pick_request)
-
-        start = time()
-        while not future.done():
-            pass
-            if time()-start >= 5.0:
-                self.node.get_logger().warn(f"Unable to pick frame {self.pick_frame_selection.get()} with {self.selected_robot.get()}")
-                return
-
-        self.occupied_slots[self.selected_robot.get()].remove(self.pick_frame_selection.get())
-        self.unoccupied_slots[self.selected_robot.get()].append(self.pick_frame_selection.get())
-
-        if "small" in self.pick_frame_selection or "sg" in self.pick_frame_selection:
-            self.held_gear = ["small", "sg"]
-        elif "medium" in self.pick_frame_selection or "mg" in self.pick_frame_selection:
-            self.held_gear = ["medium", "mg"]
-        else:
-            self.held_gear = ["large", "lg"]
-        self.reload_pick_and_place()
+        future.add_done_callback(self.pick_response_cb)
     
+    def pick_response_cb(self, future: Future):
+        try:
+            response = future.result()
+            if response.success:
+                self.occupied_slots[self.selected_robot.get()].remove(self.pick_frame_selection.get())
+                self.unoccupied_slots[self.selected_robot.get()].append(self.pick_frame_selection.get())
+
+                if "small" in self.pick_frame_selection.get() or "sg" in self.pick_frame_selection.get():
+                    self.held_gear = ["small", "sg"]
+                elif "medium" in self.pick_frame_selection.get() or "mg" in self.pick_frame_selection.get():
+                    self.held_gear = ["medium", "mg"]
+                else:
+                    self.held_gear = ["large", "lg"]
+                self.reload_pick_and_place()
+            else:
+                self.node.get_logger().warn(f"Failed to pick frame {self.pick_frame_selection.get()} with {self.selected_robot.get()}")
+        except Exception as e:
+            self.node.get_logger().error("Pick service call ailed: %r" % (e,))
     # ==============================================================
     #                            Place
     # ==============================================================
@@ -445,6 +456,7 @@ class ServicesFrame(ctk.CTkFrame):
         elif self.held_gear is None:
             ctk.CTkLabel(self.place_frame, text="A gear must be picked by " + self.selected_robot.get() + " to place. Please pick a gear").pack(pady=10)
         else:
+            # self.available_matching_slots = self.unoccupied_slots[self.selected_robot.get()]
             self.available_matching_slots = []
             for slot in self.unoccupied_slots[self.selected_robot()]:
                 for i in self.held_gear:
@@ -456,25 +468,34 @@ class ServicesFrame(ctk.CTkFrame):
             self.place_frame_menu = ctk.CTkComboBox(self.place_frame, variable=self.place_frame_selection, values=self.available_matching_slots)
             self.place_frame_menu.pack(pady=10)
 
-            ctk.CTkButton(self.place_frame, text="Call Service", command=self.call_place_service).pack(pady=10)
+            ctk.CTkButton(self.place_frame, text="Call Service", command=self.call_place_service_thread).pack(pady=10)
 
-            self.place_frame_selection.trace_add('write', partial(self.only_show_matching_frames, self.place_frame_selection, self.place_frame_menu, self.available_matching_slots))
+            self.place_frame_selection.trace_add('write', partial(self.only_show_matching_frames, self.place_frame_selection, self.place_frame_menu, self.unoccupied_slots[self.selected_robot.get()]))
 
+    def call_place_service_thread(self):
+        thread = threading.Thread(target=self.call_place_service)
+        thread.start()
+    
     def call_place_service(self):
         place_request = Place.Request()
         place_request.frame_name = self.place_frame_selection.get()
 
         future = self.service_clients[self.selected_robot.get()]["place_in_slot"].call_async(place_request)
+        future.add_done_callback(self.place_response_cb)
+    
+    def place_response_cb(self, future: Future):
+        try:
+            response = future.result()
+            if response.success:
+                self.occupied_slots[self.selected_robot.get()].append(self.place_frame_selection.get())
+                self.unoccupied_slots[self.selected_robot.get()].remove(self.place_frame_selection.get())
 
-        start = time()
-        while not future.done():
-            pass
-            if time()-start >= 5.0:
-                self.node.get_logger().warn(f"Unable to place frame {self.place_frame_selection.get()} with {self.selected_robot.get()}")
-                return
-        
-        self.occupied_slots[self.selected_robot.get()].append(self.place_frame_selection.get())
-        self.unoccupied_slots[self.selected_robot.get()].remove(self.place_frame_selection.get())
+                self.held_gear = None
+                self.reload_pick_and_place()
+            else:
+                self.node.get_logger().warn(f"Failed to place frame {self.place_frame_selection.get()} with {self.selected_robot.get()}")
+        except Exception as e:
+            self.node.get_logger().error("Place service call failed: %r" % (e,))
             
     # ==============================================================
     #                          Gripper
@@ -556,6 +577,8 @@ class PDDLFrame(ctk.CTkFrame):
         self.execute_plan_button = ctk.CTkButton(self, text="Execute Plan", command=self.call_execute_plan_action, state=tk.DISABLED)
         self.execute_plan_button.pack()
 
+        self.plan: Optional[Plan] = None
+
     def call_generate_plan_service(self):
         generate_plan_request = GeneratePlan.Request()
 
@@ -568,6 +591,7 @@ class PDDLFrame(ctk.CTkFrame):
                 self.node.get_logger().warn(f"Unable to generate plan (timeout)")
                 return
         if future.result().success:
+            self.plan = future.result().plan
             self.generate_plan_button.configure(state=tk.DISABLED)
             self.scrollable_label.configure(text="\n".join([item.action for item in future.result().plan.items]))
             self.execute_plan_button.configure(state=tk.NORMAL)
@@ -580,6 +604,7 @@ class PDDLFrame(ctk.CTkFrame):
         self.node.get_logger().info("Executing plan")
 
         goal = ExecutePlan.Goal()
+        goal.plan = self.plan
 
         try:
             future = self.execute_plan_client.send_goal_async(goal)
