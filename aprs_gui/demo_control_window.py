@@ -9,9 +9,8 @@ import cv2
 from time import time
 from math import pi
 from functools import partial
-from sensor_msgs.msg import Image as ImageMsg, JointState
+from sensor_msgs.msg import JointState
 from rclpy.qos import qos_profile_default
-from cv_bridge import CvBridge
 from typing import Optional
 from ament_index_python.packages import get_package_share_directory
 
@@ -44,8 +43,6 @@ class GuiClass(Node):
         self.img_max_height = 400
         self.main_wind.grid_rowconfigure([i for i in range(5)], weight=1)
         self.main_wind.grid_columnconfigure((1,2,3), weight=1)
-
-        self.bridge = CvBridge()
         
         # Stream handlers
         share_path = get_package_share_directory('aprs_vision')

@@ -21,7 +21,7 @@ from time import sleep
 from aprs_gui.canvas_tooltips import CanvasTooltip
 
 from aprs_interfaces.msg import Tray, SlotInfo
-from aprs_interfaces.srv import LocateTrays, Pick, Place, MoveToNamedPose, PneumaticGripperControl, GenerateInitState, GeneratePlan
+from aprs_interfaces.srv import LocateTrays, Pick, Place, MoveToNamedPose, PneumaticGripperControl, GeneratePlan
 from aprs_interfaces.action import ExecutePlan
 
 from geometry_msgs.msg import Transform
@@ -541,15 +541,11 @@ class PDDLFrame(ctk.CTkFrame):
         super().__init__(frame, width = 1200, height=950, fg_color="#EBEBEB")
 
         self.node = node
-        self.service_clients = {"generate_init_state": self.node.create_client(GenerateInitState, f"/generate_pddl_init_state"),
-                                "generate_plan": self.node.create_client(GeneratePlan, f"/generate_pddl_plan")}
+        self.service_clients = {"generate_plan": self.node.create_client(GeneratePlan, f"/generate_pddl_plan")}
         
         self.execute_plan_client = ActionClient(self.node, ExecutePlan, "/execute_pddl_plan")
 
-        self.generate_init_state_button = ctk.CTkButton(self, text="Generate Init State", command=self.call_generate_init_state_service_)
-        self.generate_init_state_button.pack()
-
-        self.generate_plan_button = ctk.CTkButton(self, text="Generate Plan", command=self.call_generate_plan_service, state=tk.DISABLED)
+        self.generate_plan_button = ctk.CTkButton(self, text="Generate Plan", command=self.call_generate_plan_service, state=tk.NORMAL)
         self.generate_plan_button.pack()
 
         self.plan_scrollable_frame = ctk.CTkScrollableFrame(self, width=900, height=450)
@@ -559,21 +555,6 @@ class PDDLFrame(ctk.CTkFrame):
 
         self.execute_plan_button = ctk.CTkButton(self, text="Execute Plan", command=self.call_execute_plan_action, state=tk.DISABLED)
         self.execute_plan_button.pack()
-    
-    def call_generate_init_state_service_(self):
-        generate_init_state_request = GenerateInitState.Request()
-
-        future = self.service_clients["generate_init_state"].call_async(generate_init_state_request)
-
-        start = time()
-        while not future.done():
-            pass
-            if time()-start >= 5.0:
-                self.node.get_logger().warn(f"Unable to generate init state (timeout)")
-                return
-        
-        self.generate_init_state_button.configure(state=tk.DISABLED)
-        self.generate_plan_button.configure(state=tk.NORMAL)
 
     def call_generate_plan_service(self):
         generate_plan_request = GeneratePlan.Request()
@@ -609,6 +590,6 @@ class PDDLFrame(ctk.CTkFrame):
             
             self.execute_plan_button.configure(state=tk.DISABLED)
             self.scrollable_label.configure(text="")
-            self.generate_init_state_button.configure(state=tk.NORMAL)
+            self.generate_plan_button.configure(state=tk.NORMAL)
         except:
             self.node.get_logger().info("Could not execute plan")

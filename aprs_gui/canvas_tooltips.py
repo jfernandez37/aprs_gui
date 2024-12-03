@@ -34,17 +34,21 @@ class CanvasTooltip: # https://stackoverflow.com/questions/40538204/how-i-can-ma
         self.pad = pad
         self.id = None
         self.tw = None
+        self.show_up = True
 
     def onEnter(self, event=None):
         self.schedule()
+        self.show = True
 
     def onLeave(self, event=None):
+        self.show_up = False
         self.unschedule()
         self.hide()
 
     def schedule(self):
         self.unschedule()
-        self.id = self.canvas.after(self.waittime, self.show)
+        if self.show_up:
+            self.id = self.canvas.after(self.waittime, self.show)
 
     def unschedule(self):
         id_ = self.id
@@ -53,6 +57,7 @@ class CanvasTooltip: # https://stackoverflow.com/questions/40538204/how-i-can-ma
             self.canvas.after_cancel(id_)
 
     def show(self, event=None):
+        print("TEST")
         def tip_pos_calculator(canvas, label,
                                *,
                                tip_delta=(10, 5), pad=(5, 3, 5, 3)):
